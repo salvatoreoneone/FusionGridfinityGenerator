@@ -674,6 +674,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     showPreviewManual.isFullWidth = True
     commandUIState.registerCommandInput(showPreviewManual)
 
+    customizations.addBinInputs(commandUIState, inputs)
+
     refreshUi()
 
     futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)

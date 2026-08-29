@@ -1,6 +1,8 @@
 import adsk.core, adsk.fusion, traceback
 
 from . import parametrization
+from . import inputs as customInputs
+from .features import cornerRelief
 from ... import fusion360utils as futil
 
 # Translate the Python-coded parametrisation of the generators into live Fusion
@@ -18,7 +20,9 @@ PARAMETRIZATION_ENABLED = True
 #
 # Empty by default: with nothing registered the hooks are inert and the add-in
 # produces byte-identical output to upstream.
-REGISTERED = []
+REGISTERED = [
+    cornerRelief,
+]
 
 
 class CustomizationContext():
@@ -63,6 +67,11 @@ def _apply(context: CustomizationContext, handlerName: str):
         handler(context)
 
 
+def addBinInputs(commandUIState, commandInputs):
+    """Append this fork's inputs to the bin dialog."""
+    customInputs.addBinInputs(commandUIState, commandInputs)
+
+
 def beginGeneration(design: adsk.fusion.Design):
     """Called before any geometry is built.
 
@@ -87,19 +96,22 @@ def applyBinCustomizations(
     binBodyInput=None,
     baseGeneratorInput=None,
 ):
-    endGeneration()
-    if not REGISTERED:
-        return
-    _apply(
-        CustomizationContext(
-            design,
-            targetComponent,
-            commandInputs,
-            binBodyInput=binBodyInput,
-            baseGeneratorInput=baseGeneratorInput,
-        ),
-        'applyToBin',
-    )
+    try:
+        if REGISTERED:
+            _apply(
+                CustomizationContext(
+                    design,
+                    targetComponent,
+                    commandInputs,
+                    binBodyInput=binBodyInput,
+                    baseGeneratorInput=baseGeneratorInput,
+                ),
+                'applyToBin',
+            )
+    finally:
+        # After the customizations, not before: their geometry should be traced on the
+        # same terms as the generator's.
+        endGeneration()
 
 
 def applyBaseplateCustomizations(
@@ -108,15 +120,16 @@ def applyBaseplateCustomizations(
     commandInputs: adsk.core.CommandInputs,
     baseplateGeneratorInput=None,
 ):
-    endGeneration()
-    if not REGISTERED:
-        return
-    _apply(
-        CustomizationContext(
-            design,
-            targetComponent,
-            commandInputs,
-            baseplateGeneratorInput=baseplateGeneratorInput,
-        ),
-        'applyToBaseplate',
-    )
+    try:
+        if REGISTERED:
+            _apply(
+                CustomizationContext(
+                    design,
+                    targetComponent,
+                    commandInputs,
+                    baseplateGeneratorInput=baseplateGeneratorInput,
+                ),
+                'applyToBaseplate',
+            )
+    finally:
+        endGeneration()

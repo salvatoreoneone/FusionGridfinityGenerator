@@ -140,4 +140,29 @@ mechanism stops a second generation in one document from retuning the first.
 
 ## Registered customizations
 
-None yet. With `REGISTERED` empty the post-generation hooks are inert.
+### Corner relief — `features/cornerRelief.py`
+
+Cuts a full-height cylindrical relief at each of the four corners of the bin footprint,
+so the bin clears the rounded internal corners or corner posts of the box it sits in.
+Off by default; enabled per-bin from a "Customizations" group in the dialog, with a
+diameter input defaulting to 5 mm.
+
+Translated from a hand-built model — four Ø5 mm circles on the XY plane, centres
+projected from the generated body's corners, cut two-sided through everything. Verified
+against that model: bounding box, volume (71.24397 cm3), face count (219) and edge
+count (483) all identical.
+
+Two deliberate departures from what was modelled by hand:
+
+* **Corner positions are computed from parameters, not projected from geometry.** The
+  hand model projected from `'Simple box at point sketch'`, which belongs to the *lip* —
+  so the relief silently depended on lip geometry it has nothing to do with, and would
+  have broken outright with the lip switched off. The generator already computes the
+  footprint at `binBodyGenerator.py:33-34`, so nothing has to be searched for. This is
+  the "computed placement from parameters" tier: it cannot select the wrong entity
+  because it selects nothing.
+* **Depth is computed rather than a fixed 50 mm**, spanning base through lip, so it
+  stays a through-cut at any bin height.
+
+Customizations run *before* the tracer is removed, so their geometry is parameterised on
+the same terms as the generator's — the relief contributes 8 expressions of its own.

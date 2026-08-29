@@ -235,6 +235,18 @@ def isActive() -> bool:
     return _session is not None
 
 
+def seedValue(name: str, value, unit: str = UNIT_LENGTH, isLength: bool = True):
+    """Turn a plain number into a named Fusion parameter, for customization code.
+
+    Values read straight from command inputs never pass through the patched DTO
+    setters, so a customization has to seed its own. Returns the number unchanged when
+    no tracing session is open, which keeps callers free of conditionals.
+    """
+    if _session is None:
+        return value
+    return _session.seed(name, value, unit, isLength)
+
+
 def install(design: adsk.fusion.Design):
     """Begin translating.
 
