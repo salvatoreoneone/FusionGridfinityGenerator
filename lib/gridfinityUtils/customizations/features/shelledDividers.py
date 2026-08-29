@@ -40,7 +40,7 @@ BIN_TYPE_INPUT_ID = 'bin_type'
 BIN_TYPE_SHELLED = 'Shelled'
 
 
-def _isShelled(commandInputs) -> bool:
+def isShelled(commandInputs) -> bool:
     if commandInputs is None:
         return False
     dropdown = commandInputs.itemById(BIN_TYPE_INPUT_ID)
@@ -50,7 +50,7 @@ def _isShelled(commandInputs) -> bool:
 
 def isEnabled(context) -> bool:
     binInput = context.binBodyInput
-    if binInput is None or not _isShelled(context.commandInputs):
+    if binInput is None or not isShelled(context.commandInputs):
         return False
     try:
         return float(binInput.compartmentsByX) > 1 or float(binInput.compartmentsByY) > 1
@@ -58,12 +58,12 @@ def isEnabled(context) -> bool:
         return False
 
 
-def _targetBody(component: adsk.fusion.Component):
+def targetBody(component: adsk.fusion.Component):
     solids = [body for body in component.bRepBodies if body.isSolid]
     return max(solids, key=lambda body: body.volume) if solids else None
 
 
-def _cavityFloor(body: adsk.fusion.BRepBody, minX, maxX, minY, maxY, top):
+def cavityFloor(body: adsk.fusion.BRepBody, minX, maxX, minY, maxY, top):
     """Z of the floor the dividers stand on.
 
     Found by rule rather than derived: the shell floor depends on the shell operation
@@ -114,7 +114,7 @@ def applyToBin(context):
     if binInput is None or component is None:
         return
 
-    target = _targetBody(component)
+    target = targetBody(component)
     if target is None:
         futil.log('%s: no solid body, skipping' % NAME)
         return
@@ -127,7 +127,7 @@ def applyToBin(context):
     footprintLength = binInput.baseLength * binInput.binLength - binInput.xyClearance * 2.0
 
     top = target.boundingBox.maxPoint.z
-    floor = _cavityFloor(target,
+    floor = cavityFloor(target,
                          float(shell), float(footprintWidth) - float(shell),
                          float(shell), float(footprintLength) - float(shell),
                          top)

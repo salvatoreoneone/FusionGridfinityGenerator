@@ -261,6 +261,37 @@ Verified with a **tab present** at grid 2x1: the divider spans z 0.0744..2.3800,
 the range of the hand-built rib it was translated from. Also at 3x2 (three walls, both
 axes). Bounding box unchanged top and bottom, single solid body in each case.
 
+### Shelled scoop — `features/shelledScoop.py`
+
+The scoop is Hollow-only upstream, behind two independent gates:
+
+    entry.py:954   binBodyInput.isSolid  = isSolid or isShelled
+    entry.py:956   binBodyInput.hasScoop = has_scoop.value and isHollow
+
+Line 956 ands the checkbox with `isHollow`, so ticking "Add scoop" on a shelled bin
+resolves to `False` with nothing to say it was ignored. And even without that, line 954
+marks shelled bins solid, so `binBodyGenerator.py:112` skips the compartment block, which
+is where the scoop is built. Same root cause as the missing compartments.
+
+Reads the **raw checkbox** rather than `binBodyInput.hasScoop`, which is already forced
+`False` for this bin type, then fillets the bottom edge of the front interior wall. Runs
+after the dividers, which split that wall into one face per cell — so the scoop lands per
+cell, matching how hollow bins scoop each compartment.
+
+Two things worth keeping:
+
+* **The wall is found by position, not by normal direction.** `Plane.normal` is the
+  surface's own normal and says nothing about the face's orientation within the solid —
+  that needs `isParamReversed`. Measured on a shelled bin, the front interior wall reports
+  `n.y = -1` and the back wall `n.y = +1`, the opposite of what "points into the cavity"
+  would suggest. The wall is the only face at `y = shell`, so position is unambiguous.
+* **The radius is bounded by the wall, not the cavity.** The wall stops at the lip, well
+  below the rim, so a radius sized against cavity height (2.285) exceeds the wall it has
+  to roll along (1.99) and the fillet fails outright rather than degrading.
+
+Verified at grid 1x1 (one scoop) and 2x1 (two scoops, one per cell) with the checkbox on,
+and skipped cleanly with it off. Bounding box unchanged, single solid body throughout.
+
 ### Settings stamp — `features/settingsStamp.py`
 
 Every generated bin records the settings that produced it, as a design attribute. Read

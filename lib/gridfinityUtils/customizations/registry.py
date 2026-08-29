@@ -6,6 +6,7 @@ from . import presets
 from .features import cornerRelief
 from .features import settingsStamp
 from .features import shelledDividers
+from .features import shelledScoop
 from ... import fusion360utils as futil
 
 # Translate the Python-coded parametrisation of the generators into live Fusion
@@ -25,6 +26,9 @@ PARAMETRIZATION_ENABLED = True
 # produces byte-identical output to upstream.
 REGISTERED = [
     shelledDividers,
+    # After the dividers: they split the front wall into one face per cell, so the
+    # scoop then lands per cell the way hollow bins scoop each compartment.
+    shelledScoop,
     cornerRelief,
     settingsStamp,
 ]
