@@ -20,6 +20,7 @@ from ...lib.gridfinityUtils.binBodyTabGeneratorInput import BinBodyTabGeneratorI
 from ...lib.gridfinityUtils.binBodyTabGenerator import createGridfinityBinBodyTab
 from ...lib.ui.commandUiState import CommandUiState
 from ...lib.ui.unsupportedDesignTypeException import UnsupportedDesignTypeException
+from ...lib.gridfinityUtils import customizations
 
 app = adsk.core.Application.get()
 ui = app.userInterface
@@ -1042,6 +1043,9 @@ def generateBin(args: adsk.core.CommandEventArgs):
                 for body in bodiesToRemove:
                     gridfinityBinComponent.features.removeFeatures.add(body)
                 combineUtils.joinBodies(binBody, commonUtils.objectCollectionFromList([tabMainBody]), gridfinityBinComponent)
+
+        customizations.applyBinCustomizations(
+            des, gridfinityBinComponent, inputs, binBodyInput, baseGeneratorInput)
 
         # group features in timeline
         binGroup = des.timeline.timelineGroups.add(originalTimelineCount, des.timeline.count - 1)

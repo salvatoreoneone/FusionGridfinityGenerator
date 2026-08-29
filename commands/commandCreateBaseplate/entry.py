@@ -13,6 +13,7 @@ from ...lib.gridfinityUtils import const
 from .inputState import InputState
 from ...lib.ui.commandUiState import CommandUiState
 from ...lib.ui.unsupportedDesignTypeException import UnsupportedDesignTypeException
+from ...lib.gridfinityUtils import customizations
 
 app = adsk.core.Application.get()
 ui = app.userInterface
@@ -460,6 +461,9 @@ def generateBaseplate(args: adsk.core.CommandEventArgs):
 
         baseplateBody = createGridfinityBaseplate(baseplateGeneratorInput, gridfinityBaseplateComponent)
         baseplateBody.name = baseplateName
+
+        customizations.applyBaseplateCustomizations(
+            des, gridfinityBaseplateComponent, args.command.commandInputs, baseplateGeneratorInput)
 
         if des.designType == adsk.fusion.DesignTypes.ParametricDesignType:
             # group features in timeline
