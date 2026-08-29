@@ -31,7 +31,7 @@ The top is *not* padded: material above the bin would break stacking.
 import adsk.core, adsk.fusion
 
 from .. import parametrization
-from ... import const, shapeUtils, combineUtils, commonUtils, geometryUtils, faceUtils
+from ... import const, shapeUtils, combineUtils, commonUtils, geometryUtils
 from .... import fusion360utils as futil
 
 NAME = 'Shelled dividers'
@@ -68,13 +68,17 @@ def _cavityFloor(body: adsk.fusion.BRepBody, minX, maxX, minY, maxY, top):
 
     Found by rule rather than derived: the shell floor depends on the shell operation
     and on whether a lip is present, and measuring it is both simpler and less likely to
-    drift than reproducing that chain. The largest horizontal face lying inside the
-    cavity footprint, above the gridfinity base and below the rim, is the floor.
+    drift than reproducing that chain. The floor is the *lowest* horizontal face lying
+    inside the cavity footprint, above the gridfinity base and below the rim.
 
-    The base bound matters. The bin body is built from z = 0 upward and the base foot
-    hangs below it, and the foot's chamfered underside is horizontal, sits inside the
-    cavity footprint and is large -- so without this it wins on area and the dividers get
-    driven a shell thickness below the bin.
+    Lowest, not largest. A label tab puts a wide horizontal ledge high in the cavity --
+    on a 2x1x1 bin that ledge measures 3.894 against the floor's 0.412 -- so picking by
+    area plants the dividers on the label and leaves a stub from 1.855 to the rim instead
+    of a full-height wall. Depth is what identifies a floor here; size is not.
+
+    The base bound matters too. The bin body is built from z = 0 upward and the base foot
+    hangs below it, and the foot's chamfered underside is horizontal and sits inside the
+    cavity footprint, so without it the dividers get driven below the bin.
     """
     candidates = []
     for face in body.faces:
@@ -91,7 +95,7 @@ def _cavityFloor(body: adsk.fusion.BRepBody, minX, maxX, minY, maxY, top):
         candidates.append(face)
     if not candidates:
         return None
-    return faceUtils.maxByArea(candidates).boundingBox.minPoint.z
+    return min(face.boundingBox.minPoint.z for face in candidates)
 
 
 def _wallPositions(cavityMin, cavityMax, count, thickness):

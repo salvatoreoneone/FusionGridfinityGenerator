@@ -243,13 +243,23 @@ Three details worth keeping:
 * The top is **not** padded. Material above the rim would break stacking.
 
 The cavity floor is found by rule, not derived: it depends on the shell operation and on
-whether a lip is present. The search is bounded to faces above `z = 0`, because the base
-foot's chamfered underside is horizontal, sits inside the cavity footprint and is large —
-without that bound it wins on area and drives the dividers below the bin, which is
-exactly what the first version did.
+whether a lip is present. It is the **lowest** qualifying horizontal face — not the
+largest, and bounded to faces above `z = 0`.
 
-Verified at grid 2x1 (one wall, matching the rib) and 3x2 (three walls, both axes):
-bounding box unchanged top and bottom, single solid body in each case.
+Both of those bounds were learned the hard way:
+
+* **Lowest, not largest.** A label tab puts a wide ledge high in the cavity — on a 2x1x1
+  bin it measures 3.894 against the floor's 0.412 — so choosing by area plants the
+  dividers *on the label*, leaving a 0.525 cm stub under the rim instead of a full-height
+  wall. This shipped, because the test that "passed" ran with `hasTab = False`. Depth is
+  what identifies a floor; size is not.
+* **Above `z = 0`.** The base foot's chamfered underside is horizontal and sits inside the
+  cavity footprint, so without the bound the dividers get driven out of the bottom of the
+  bin.
+
+Verified with a **tab present** at grid 2x1: the divider spans z 0.0744..2.3800, exactly
+the range of the hand-built rib it was translated from. Also at 3x2 (three walls, both
+axes). Bounding box unchanged top and bottom, single solid body in each case.
 
 ### Settings stamp — `features/settingsStamp.py`
 
