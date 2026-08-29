@@ -24,13 +24,16 @@ PRESET_SELECT_ID = 'custom_preset_select'
 PRESET_NAME_ID = 'custom_preset_name'
 PRESET_SAVE_ID = 'custom_preset_save'
 PRESET_DELETE_ID = 'custom_preset_delete'
+PRESET_STATUS_ID = 'custom_preset_status'
 PRESET_PATH_ID = 'custom_preset_path'
+
+STATUS_IDLE = 'No preset loaded.'
 
 # The preset controls describe the preset machinery itself, so they must never be
 # captured into a preset or restored from one.
 PRESET_CONTROL_IDS = frozenset([
     PRESET_GROUP_ID, PRESET_SELECT_ID, PRESET_NAME_ID,
-    PRESET_SAVE_ID, PRESET_DELETE_ID, PRESET_PATH_ID,
+    PRESET_SAVE_ID, PRESET_DELETE_ID, PRESET_STATUS_ID, PRESET_PATH_ID,
 ])
 
 
@@ -98,8 +101,24 @@ def _addPresetInputs(commandUIState, inputs: adsk.core.CommandInputs):
     deleteButton = group.children.addBoolValueInput(PRESET_DELETE_ID, 'Delete preset', False, '', False)
     deleteButton.text = 'Delete selected'
 
+    # Deliberately not registered with commandUIState: it is transient feedback, and
+    # leaving it unregistered also keeps forceUIRefresh() from overwriting the message
+    # right after a preset is applied.
+    status = group.children.addTextBoxCommandInput(PRESET_STATUS_ID, 'Status', STATUS_IDLE, 1, True)
+    status.isFullWidth = True
+
     path = group.children.addTextBoxCommandInput(PRESET_PATH_ID, 'Stored in', presets.presetsPath(), 2, True)
     path.isFullWidth = True
+
+
+def setPresetStatus(commandInputs: adsk.core.CommandInputs, message: str):
+    """Show what just happened. Selecting a preset otherwise applies it silently, which
+    gives no sign the dialog values have been replaced."""
+    if commandInputs is None:
+        return
+    status = commandInputs.itemById(PRESET_STATUS_ID)
+    if status is not None:
+        status.formattedText = message
 
 
 def populateSelector(selector: adsk.core.DropDownCommandInput, selected: str = None):

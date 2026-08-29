@@ -178,6 +178,16 @@ the add-in folder and is wiped on reinstall; this is not.
 Save under a name, pick from the dropdown to load every dialog value, delete the
 selected one. Reusing a name overwrites.
 
+A **Status** line reports every action — `Loaded "Tactix 32x49" — 43 settings applied`,
+`Saved …`, `Deleted …` — because applying a preset silently changes a dialog full of
+values with nothing to show it happened. It also guides the near-misses: saving with no
+name, or deleting with nothing selected.
+
+The status box is deliberately *not* registered with `commandUIState`. That keeps it out
+of saved state, and stops `forceUIRefresh()` from wiping the message during the redraw
+that loading a preset triggers. For the same reason the message is written after
+`refresh()`, not before.
+
 ### Why not in the Fusion project
 
 That was the first choice, and it was measured and rejected:

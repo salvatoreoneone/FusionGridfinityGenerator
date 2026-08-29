@@ -100,15 +100,21 @@ def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) 
     selector = commandInputs.itemById(customInputs.PRESET_SELECT_ID)
     nameInput = commandInputs.itemById(customInputs.PRESET_NAME_ID)
 
+    status = None
+
     if inputId == customInputs.PRESET_SELECT_ID:
         name = customInputs.selectedPreset(commandInputs)
-        if name:
+        if not name:
+            status = 'Preset cleared. Current settings left unchanged.'
+        else:
             state = presets.load(name)
             if state:
                 commandUIState.initValues(state)
                 commandUIState.forceUIRefresh()
-                futil.log('Presets: loaded %r' % name)
+                status = '<b>Loaded &quot;%s&quot;</b> &mdash; %d settings applied.' % (name, len(state))
+                futil.log('Presets: loaded %r (%d settings)' % (name, len(state)))
             else:
+                status = 'Could not read &quot;%s&quot;. Settings left unchanged.' % name
                 futil.log('Presets: %r could not be read' % name)
 
     elif inputId == customInputs.PRESET_SAVE_ID:
@@ -117,28 +123,43 @@ def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) 
         changedInput.value = False
         name = (nameInput.value if nameInput else '').strip() or customInputs.selectedPreset(commandInputs)
         if not name:
-            futil.log('Presets: nothing saved, no name given')
+            customInputs.setPresetStatus(
+                commandInputs, 'Type a name in <i>Save as</i> first, or pick a preset to overwrite.')
             return True
-        if presets.save(name, _presetPayload(commandUIState)):
+        payload = _presetPayload(commandUIState)
+        if presets.save(name, payload):
             if nameInput:
                 nameInput.value = ''
             customInputs.populateSelector(selector, name)
+            status = '<b>Saved &quot;%s&quot;</b> &mdash; %d settings.' % (name, len(payload))
             futil.log('Presets: saved %r to %s' % (name, presets.presetsPath()))
+        else:
+            status = 'Could not save &quot;%s&quot;. See the Text Commands log.' % name
 
     elif inputId == customInputs.PRESET_DELETE_ID:
         if not changedInput.value:
             return True
         changedInput.value = False
         name = customInputs.selectedPreset(commandInputs)
-        if name and presets.delete(name):
+        if not name:
+            status = 'Pick a preset to delete first.'
+        elif presets.delete(name):
             customInputs.populateSelector(selector, presets.NONE_LABEL)
+            status = '<b>Deleted &quot;%s&quot;.</b>' % name
             futil.log('Presets: deleted %r' % name)
+        else:
+            status = 'Could not delete &quot;%s&quot;.' % name
 
     if refresh is not None:
         try:
             refresh()
         except Exception as err:
             futil.log('Presets: refresh failed: %s' % err)
+
+    # Set last: refresh() and forceUIRefresh() run first, so the message is not
+    # overwritten by the redraw it triggers.
+    if status:
+        customInputs.setPresetStatus(commandInputs, status)
     return True
 
 
