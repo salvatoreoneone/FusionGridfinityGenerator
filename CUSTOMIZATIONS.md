@@ -228,9 +228,21 @@ drawn from a line at the top and grown down until it met material.
 `RibFeatureInput` class. Same for Web. The wall is therefore built as a solid box and
 joined, which means computing what the rib got for free.
 
-Spacing mirrors the hollow path exactly (`binBodyGenerator.py:118-122`), so both bin
-types divide identically. On the hand-built 2x1 bin that formula lands the wall at
-3.115..3.235 cm — precisely where the rib measured.
+Dividers sit on gridfinity **unit boundaries**, not at equal fractions of the cavity. A
+bin is a whole number of units and a divider separates whole units, so the boundary after
+k units is at `k * baseWidth - xyClearance`. On a 2u bin with a 32 mm base that is 3.175,
+and a 1.2 mm wall centred there spans 3.115..3.235 — precisely where the hand-built rib
+measured.
+
+Compartment sizes are whole units, distributed as evenly as the units allow with the
+remainder going to the leading compartments: a 5u bin split into 2 gives 3u then 2u. A
+count above the unit count cannot be built, so it clamps, silently in the model and with
+a line in the Text Commands log.
+
+This deliberately **differs from the hollow path**, which divides the cavity into equal
+fractions. The two agree only when the compartment count equals the unit count. At 2
+units with 3 compartments the equal-fraction rule puts walls at 2.13 and 4.22, aligned to
+nothing — which is what the first version shipped.
 
 Three details worth keeping:
 
@@ -257,9 +269,11 @@ Both of those bounds were learned the hard way:
   cavity footprint, so without the bound the dividers get driven out of the bottom of the
   bin.
 
-Verified with a **tab present** at grid 2x1: the divider spans z 0.0744..2.3800, exactly
-the range of the hand-built rib it was translated from. Also at 3x2 (three walls, both
-axes). Bounding box unchanged top and bottom, single solid body in each case.
+Verified with a **tab present**: a 2u bin asking for 3 compartments clamps to 2 and puts
+one wall at 3.115..3.235 spanning z 0.0744..2.3800 — exactly the hand-built rib. A 3u bin
+asking for 2 splits 2u|1u with the wall on the 2u boundary at 6.315..6.435. Also checked
+at 3x2 across both axes. Bounding box unchanged top and bottom, single solid body in
+every case.
 
 ### Shelled scoop — `features/shelledScoop.py`
 

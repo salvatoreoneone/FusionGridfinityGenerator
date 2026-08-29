@@ -13,9 +13,11 @@ Ribs cannot be reproduced directly -- adsk.fusion.RibFeatures exposes only count
 /itemByName, with no createInput or add, and there is no RibFeatureInput class at all.
 The same wall is therefore built as a solid box and joined.
 
-Spacing mirrors the hollow path exactly (binBodyGenerator.py:118-122), so the two bin
-types divide identically. On the hand-built 2x1 bin that formula lands the wall at
-3.115..3.235 cm, which is precisely where the rib measured.
+Dividers sit on gridfinity **unit boundaries**, not at equal fractions of the cavity. A
+bin is a whole number of units and a divider separates whole units, so a 5u bin split
+into 2 gives 3u then 2u, and a count above the unit count is clamped. This differs from
+the hollow path, which divides the cavity evenly; the two agree only when the compartment
+count equals the unit count.
 
 Two deliberate margins, both relying on a join being a no-op where material already
 exists:
@@ -98,14 +100,54 @@ def cavityFloor(body: adsk.fusion.BRepBody, minX, maxX, minY, maxY, top):
     return min(face.boundingBox.minPoint.z for face in candidates)
 
 
-def _wallPositions(cavityMin, cavityMax, count, thickness):
-    """Start coordinates of the dividing walls, mirroring binBodyGenerator.py:121."""
-    count = int(count)
-    if count < 2:
-        return []
-    cellSize = (cavityMax - cavityMin - (count - 1) * thickness) / count
-    return [cavityMin + index * cellSize + (index - 1) * thickness
-            for index in range(1, count)]
+def compartmentSizes(units, count):
+    """Split `units` gridfinity units into `count` compartments, as evenly as the units
+    allow. The remainder goes to the leading compartments: 5u into 2 gives 3u then 2u.
+
+    A compartment is a whole number of units, so `count` cannot exceed `units` and is
+    clamped. Use clampedCount() to find out whether that happened.
+    """
+    units = max(1, int(units))
+    count = clampedCount(units, count)
+    base, remainder = divmod(units, count)
+    return [base + (1 if index < remainder else 0) for index in range(count)]
+
+
+def clampedCount(units, count):
+    return max(1, min(int(count), max(1, int(units))))
+
+
+def wallPositions(units, count, baseSize, xyClearance, thickness):
+    """Start coordinates of the dividing walls, centred on gridfinity unit boundaries.
+
+    Dividers belong on unit boundaries, not at equal fractions of the cavity: a bin is a
+    whole number of units and a divider separates whole units. The bin body starts one
+    xyClearance inside the first unit, so the boundary after k units sits at
+    k * baseSize - xyClearance in model space. On a 2u bin with a 32 mm base that is
+    3.175, and a 1.2 mm wall centred there spans 3.115..3.235 -- exactly the hand-built
+    rib this feature was translated from.
+
+    Dividing the cavity into equal fractions instead only agrees with this when the
+    compartment count equals the unit count. At 2 units with 3 compartments it puts walls
+    at 2.13 and 4.22, aligned to nothing.
+    """
+    sizes = compartmentSizes(units, count)
+    positions = []
+    cumulative = 0
+    for size in sizes[:-1]:
+        cumulative += size
+        boundary = cumulative * baseSize - xyClearance
+        positions.append(boundary - thickness / 2.0)
+    return positions
+
+
+def _logClamp(axis, units, requested):
+    """A compartment is a whole number of units, so more compartments than units cannot
+    be built. Clamping is silent in the model; this is the only trace of it."""
+    used = clampedCount(units, requested)
+    if used != int(requested):
+        futil.log('%s: %s asks for %d compartments but the bin is %du, using %d'
+                  % (NAME, axis, int(requested), int(units), used))
 
 
 def applyToBin(context):
@@ -143,17 +185,21 @@ def applyToBin(context):
         futil.log('%s: no room between floor and rim, skipping' % NAME)
         return
 
+    _logClamp('width', binInput.binWidth, binInput.compartmentsByX)
+    _logClamp('length', binInput.binLength, binInput.compartmentsByY)
+
     walls = []
     # Across the width: walls running the full length.
-    for x in _wallPositions(shell, footprintWidth - shell,
-                            binInput.compartmentsByX, thickness):
+    for x in wallPositions(binInput.binWidth, binInput.compartmentsByX,
+                           binInput.baseWidth, binInput.xyClearance, thickness):
         walls.append((x, 0, thickness, footprintLength))
     # Along the length: walls running the full width.
-    for y in _wallPositions(shell, footprintLength - shell,
-                            binInput.compartmentsByY, thickness):
+    for y in wallPositions(binInput.binLength, binInput.compartmentsByY,
+                           binInput.baseLength, binInput.xyClearance, thickness):
         walls.append((0, y, footprintWidth, thickness))
 
     if not walls:
+        futil.log('%s: nothing to divide' % NAME)
         return
 
     bodies = []
