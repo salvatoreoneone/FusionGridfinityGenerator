@@ -20,6 +20,7 @@ from ...lib.gridfinityUtils.binBodyTabGeneratorInput import BinBodyTabGeneratorI
 from ...lib.gridfinityUtils.binBodyTabGenerator import createGridfinityBinBodyTab
 from ...lib.ui.commandUiState import CommandUiState
 from ...lib.ui.unsupportedDesignTypeException import UnsupportedDesignTypeException
+from ...lib.gridfinityUtils import customizations
 
 app = adsk.core.Application.get()
 ui = app.userInterface
@@ -673,6 +674,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     showPreviewManual.isFullWidth = True
     commandUIState.registerCommandInput(showPreviewManual)
 
+    customizations.addBinInputs(commandUIState, inputs)
+
     refreshUi()
 
     futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
@@ -718,6 +721,8 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     inputs = args.inputs
     global commandUIState
     futil.log(f'{CMD_NAME} Input Changed Event fired from a change to {changed_input.id}')
+    if customizations.handleBinInputChanged(changed_input, inputs, commandUIState, refreshUi):
+        return
     if changed_input.id == INPUT_CHANGES_SAVE_DEFAULTS:
         saveUIInputsAsDefaults()
     elif changed_input.id == INPUT_CHANGES_RESET_TO_DEFAULTS:
@@ -897,6 +902,7 @@ def generateBin(args: adsk.core.CommandEventArgs):
         binName = 'Gridfinity bin {}x{}x{}'.format(int(bin_length.value), int(bin_width.value), int(bin_height.value))
 
         originalTimelineCount = des.timeline.count
+        customizations.beginGeneration(des)
         if des.designIntent == adsk.fusion.DesignIntentTypes.HybridDesignIntentType:
             # create new component, only allowed in hybrid intent type
             newCmpOcc = adsk.fusion.Occurrences.cast(root.occurrences).addNewComponent(adsk.core.Matrix3D.create())
@@ -1022,12 +1028,12 @@ def generateBin(args: adsk.core.CommandEventArgs):
             if hasTabInput.value:
                 compartmentTabInput = BinBodyTabGeneratorInput()
                 tabOriginPoint = adsk.core.Point3D.create(
-                    binBodyInput.wallThickness + max(0, min(binBodyInput.tabPosition, binBodyInput.binWidth - binBodyInput.tabLength)) * binBodyInput.baseWidth,
+                    binBodyInput.wallThickness - xyClearance + max(0, min(binBodyInput.tabPosition, binBodyInput.binWidth - binBodyInput.tabLength)) * binBodyInput.baseWidth,
                     const.BIN_LIP_WALL_THICKNESS if binBodyInput.hasLip and binBodyInput.hasScoop else binBodyInput.wallThickness + binBodyInput.binLength * binBodyInput.baseLength - binBodyInput.wallThickness - binBodyInput.xyClearance * 2,
                     (binBodyInput.binHeight - 1) * binBodyInput.heightUnit + max(0, binBodyInput.heightUnit - const.BIN_BASE_HEIGHT),
                 )
                 compartmentTabInput.origin = tabOriginPoint
-                compartmentTabInput.length = max(0, min(binBodyInput.tabLength, binBodyInput.binWidth)) * binBodyInput.baseWidth - binBodyInput.wallThickness * 2 - binBodyInput.xyClearance * 2
+                compartmentTabInput.length = max(0, min(binBodyInput.tabLength, binBodyInput.binWidth)) * binBodyInput.baseWidth - binBodyInput.wallThickness * 2
                 compartmentTabInput.width = binBodyInput.tabWidth
                 compartmentTabInput.overhangAngle = binBodyInput.tabOverhangAngle
                 compartmentTabInput.topClearance = const.BIN_TAB_TOP_CLEARANCE
@@ -1042,6 +1048,9 @@ def generateBin(args: adsk.core.CommandEventArgs):
                 for body in bodiesToRemove:
                     gridfinityBinComponent.features.removeFeatures.add(body)
                 combineUtils.joinBodies(binBody, commonUtils.objectCollectionFromList([tabMainBody]), gridfinityBinComponent)
+
+        customizations.applyBinCustomizations(
+            des, gridfinityBinComponent, inputs, binBodyInput, baseGeneratorInput)
 
         # group features in timeline
         binGroup = des.timeline.timelineGroups.add(originalTimelineCount, des.timeline.count - 1)
