@@ -92,10 +92,23 @@ def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) 
     ordinary value change.
     """
     inputId = changedInput.id
+
+    if inputId == customInputs.PRESET_GROUP_ID:
+        # Claimed so upstream's group handler never registers the children. Keep the
+        # group's own expansion state, which is worth persisting.
+        commandUIState.onInputUpdate(changedInput)
+        customInputs.forgetPresetControls(commandUIState)
+        if refresh is not None:
+            refresh()
+        return True
+
     if inputId not in (customInputs.PRESET_SELECT_ID,
                        customInputs.PRESET_SAVE_ID,
                        customInputs.PRESET_DELETE_ID):
         return False
+
+    # Clear anything a previous session's defaults may already have polluted.
+    customInputs.forgetPresetControls(commandUIState)
 
     selector = commandInputs.itemById(customInputs.PRESET_SELECT_ID)
     nameInput = commandInputs.itemById(customInputs.PRESET_NAME_ID)

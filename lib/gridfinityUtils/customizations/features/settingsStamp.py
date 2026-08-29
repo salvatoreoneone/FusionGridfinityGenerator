@@ -13,6 +13,7 @@ import json
 
 import adsk.core, adsk.fusion
 
+from .. import inputs as customInputs
 from .. import state as customState
 from .... import fusion360utils as futil
 
@@ -35,7 +36,10 @@ def _stamp(context):
     if uiState is None:
         return
     try:
-        payload = json.dumps(uiState.toDict(), sort_keys=True)
+        # The preset controls describe the preset machinery, not the bin.
+        payload = json.dumps(
+            uiState.toDict(ignoreKeys=list(customInputs.PRESET_CONTROL_IDS)),
+            sort_keys=True)
     except Exception as err:
         futil.log('%s: could not serialise settings: %s' % (NAME, err))
         return

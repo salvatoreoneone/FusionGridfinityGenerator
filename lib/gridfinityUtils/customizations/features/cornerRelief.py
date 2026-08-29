@@ -46,8 +46,8 @@ def _targetBody(component: adsk.fusion.Component):
     return max(solids, key=lambda body: body.volume)
 
 
-def _reliefFaces(component: adsk.fusion.Component, body: adsk.fusion.BRepBody,
-                 radius: float, corners, tolerance: float = const.DEFAULT_FILTER_TOLERANCE):
+def _reliefFaces(body: adsk.fusion.BRepBody, radius: float, corners,
+                 tolerance: float = const.DEFAULT_FILTER_TOLERANCE):
     """The cylindrical faces the relief cut left behind.
 
     Selected by rule rather than by index: a cylinder of exactly the relief radius whose
@@ -139,7 +139,7 @@ def _reinforce(component: adsk.fusion.Component, diameter, corners, wallThicknes
     if target is None:
         return
 
-    faces = _reliefFaces(component, target, float(diameter) / 2.0, corners)
+    faces = _reliefFaces(target, float(diameter) / 2.0, corners)
     if not faces:
         futil.log('%s: no relief faces found, reinforcement skipped' % NAME)
         return

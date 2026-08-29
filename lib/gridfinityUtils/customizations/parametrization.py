@@ -46,7 +46,9 @@ CONST_EXCLUDED = frozenset([
     'BIN_TAB_LABEL_ANGLE',
 ])
 
-# Constants measured in degrees rather than millimetres.
+# Constants measured in degrees rather than millimetres. Every entry is currently also
+# in CONST_EXCLUDED, so nothing reaches this today; it stays because unitFor() needs an
+# answer the moment angle support lands.
 CONST_ANGLES = frozenset(['BIN_TAB_OVERHANG_ANGLE', 'BIN_TAB_LABEL_ANGLE'])
 
 # Constants that const.py itself derives from other constants. Re-evaluated after

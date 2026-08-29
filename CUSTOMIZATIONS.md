@@ -188,6 +188,15 @@ of saved state, and stops `forceUIRefresh()` from wiping the message during the 
 that loading a preset triggers. For the same reason the message is written after
 `refresh()`, not before.
 
+Not registering it is not sufficient on its own. Upstream registers **every child of a
+group** when that group is expanded, so expanding Presets would pull the status and path
+boxes into saved state anyway. The `custom_preset_group` event is therefore claimed by
+`handleBinInputChanged`, which records the group's own expansion and then calls
+`forgetPresetControls()` to drop the children. Preset actions purge as well, to clear
+pollution an earlier session may already have written to the defaults file. The
+Customizations group is deliberately *not* claimed — corner-relief settings are real
+settings and belong in saved state.
+
 ### Why not in the Fusion project
 
 That was the first choice, and it was measured and rejected:

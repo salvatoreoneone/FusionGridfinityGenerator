@@ -111,6 +111,22 @@ def _addPresetInputs(commandUIState, inputs: adsk.core.CommandInputs):
     path.isFullWidth = True
 
 
+def forgetPresetControls(commandUIState):
+    """Drop the preset controls from saved UI state, keeping the group itself.
+
+    Upstream registers every child of a group when it is expanded
+    (commandCreateBin/entry.py, command_input_changed). That pulls the status and path
+    text boxes and the two buttons into saved state, after which forceUIRefresh() writes
+    a stale message over the status line and the controls leak into the defaults file.
+    The group's own expansion is worth keeping; its children are not.
+    """
+    if commandUIState is None:
+        return
+    for inputId in PRESET_CONTROL_IDS:
+        if inputId != PRESET_GROUP_ID:
+            commandUIState.removeValue(inputId)
+
+
 def setPresetStatus(commandInputs: adsk.core.CommandInputs, message: str):
     """Show what just happened. Selecting a preset otherwise applies it silently, which
     gives no sign the dialog values have been replaced."""
