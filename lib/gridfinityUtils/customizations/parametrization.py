@@ -125,8 +125,43 @@ class _Session():
         self.originalCreateRectangle = []
         self.names = {}
         self.fieldNames = {}
+        self.originalPoint3D = None
+        self.flattened = {}
         self.emitted = 0
         self.baked = 0
+        self.recovered = 0
+
+    def rememberFlattened(self, value):
+        """Record a symbolic value that is about to be lost inside a native object.
+
+        Point3D stores plain doubles, so a Sym passed in comes back out as a float and
+        its derivation is gone. Feature *positions* go through Point3D, which is why
+        editing binHeight grew the bin body but left the lip at its original Z.
+
+        Values seen with two different derivations are marked ambiguous and never
+        recovered: missing an expression is harmless, attributing the wrong one is not.
+        """
+        if not isSym(value):
+            return
+        key = round(float(value), 9)
+        if abs(key) < 1e-12:
+            return  # zero is structural and turns up everywhere
+        if key not in self.flattened:
+            self.flattened[key] = value
+        else:
+            known = self.flattened[key]
+            if known is not None and known.expression != value.expression:
+                self.flattened[key] = None
+
+    def recoverFlattened(self, value):
+        """Return the Sym a plain float came from, when that is unambiguous."""
+        try:
+            key = round(float(value), 9)
+        except (TypeError, ValueError):
+            return None
+        if abs(key) < 1e-12:
+            return None
+        return self.flattened.get(key)
 
     def ensureParameter(self, name: str, value: float, unit: str,
                         isConstant: bool = False) -> str:
@@ -216,6 +251,7 @@ def install(design: adsk.fusion.Design):
     session = _Session(design)
     try:
         _installConstants(session)
+        _installPoint3D(session)
         _installInputSetters(session)
         _installSketchAdapters(session)
         _installValueInput(session)
@@ -233,8 +269,9 @@ def uninstall():
     if session is None:
         return None
     _restore(session)
-    futil.log('Parametrisation: %d expressions written, %d values left numeric'
-              % (session.emitted, session.baked))
+    futil.log('Parametrisation: %d expressions written, %d values left numeric, '
+              '%d recovered through Point3D'
+              % (session.emitted, session.baked, session.recovered))
     return session
 
 
@@ -245,6 +282,8 @@ def _restore(session: _Session):
         setattr(key[0], key[1], prop)
     for module, function in session.originalCreateRectangle:
         module.createRectangle = function
+    if session.originalPoint3D is not None:
+        adsk.core.Point3D.create = session.originalPoint3D
     if session.originalCreateByReal is not None:
         adsk.core.ValueInput.createByReal = session.originalCreateByReal
 
@@ -376,11 +415,29 @@ def _installSketchAdapters(session: _Session):
             module.createRectangle = createRectangle
 
 
+def _installPoint3D(session: _Session):
+    original = adsk.core.Point3D.create
+    session.originalPoint3D = original
+
+    def create(x, y, z):
+        session.rememberFlattened(x)
+        session.rememberFlattened(y)
+        session.rememberFlattened(z)
+        return original(x, y, z)
+
+    adsk.core.Point3D.create = staticmethod(create)
+
+
 def _installValueInput(session: _Session):
     original = adsk.core.ValueInput.createByReal
     session.originalCreateByReal = original
 
     def createByReal(value):
+        if not isSym(value):
+            recovered = session.recoverFlattened(value)
+            if recovered is not None:
+                session.recovered += 1
+                value = recovered
         if isSym(value):
             try:
                 # Verify before use. A wrong expression here would silently build

@@ -84,7 +84,16 @@ parameters. While a generation runs it:
 2. wraps the generator-input property setters so dialog values become symbolic,
 3. intercepts `ValueInput.createByReal()` and emits `createByString(<expression>)`,
 4. wraps `sketchUtils.createRectangle`, whose dimensions come from geometry rather
-   than a `ValueInput` and so cannot be caught at (3).
+   than a `ValueInput` and so cannot be caught at (3),
+5. records symbolic values entering `Point3D.create()` and recovers them on the way
+   back out.
+
+Step 5 matters more than it looks. `Point3D` is native and stores plain doubles, so a
+value passed in comes back as a float with its derivation gone -- and feature
+*positions* go through it. Without recovery, editing `binHeight` grew the bin body but
+left the lip at its original Z: a model that looked driven but was only half driven. A
+value seen with two different derivations is marked ambiguous and never recovered;
+missing an expression is harmless, attributing the wrong one is not.
 
 **Why a tracer instead of a lookup table.** The expressions come from executing the
 plugin's own arithmetic, not from a hand-written mapping. When upstream changes a
@@ -113,11 +122,6 @@ and edge counts. Turning `baseWidth` from 42 to 50 mm moves the model correctly.
   returns a plain float and breaks the symbolic chain. An angle parameter would be
   created but would drive nothing, so it is better absent. Needs the tracer to
   understand `math.radians()`.
-* **Values that pass through `Point3D` are baked.** `Point3D.create()` is native and
-  stores plain doubles, so reading `.x`/`.z` back loses the symbol. Feature *positions*
-  therefore stay numeric even when their *sizes* are driven -- editing `binHeight` grows
-  the bin body but leaves the lip at its original Z. Editing lengths that come from
-  sketch rectangles (`baseWidth`, `baseLength`) works correctly.
 * **Circle-sketch dimensions are still baked** — screw and magnet positions
   (`7.75 mm`), diameters (`6.5 mm`). These come from `createCircleAtPointSketch` and
   `shapeUtils.simpleCylinder`, which position geometry by `Point3D` coordinates; the
