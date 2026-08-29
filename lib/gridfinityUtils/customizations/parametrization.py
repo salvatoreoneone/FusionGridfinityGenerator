@@ -26,7 +26,7 @@ import adsk.core, adsk.fusion
 from .symbolic import Sym, isSym
 from .. import const
 from ..baseGeneratorInput import BaseGeneratorInput
-from ..binBodyGeneratorInput import BinBodyGeneratorInput, BinBodyCompartmentDefinition
+from ..binBodyGeneratorInput import BinBodyGeneratorInput
 from ..baseplateGeneratorInput import BaseplateGeneratorInput
 from ... import fusion360utils as futil
 
@@ -85,10 +85,14 @@ FIELDS_EXCLUDED = frozenset(['tabOverhangAngle'])
 # Only the classes fed directly from the command dialog are patched. Intermediate
 # inputs (lip, tab, cutout) receive values that are already symbolic and must pass
 # through untouched -- re-wrapping them would flatten the derivation to a leaf.
+#
+# BinBodyCompartmentDefinition is deliberately absent. Its positionX/positionY/width/
+# length are per-compartment loop indices from uniformCompartments(), not design
+# parameters: seeding them would mint positionX2, positionX3, ... for every cell of
+# the compartment grid.
 PATCHED_INPUT_CLASSES = (
     BaseGeneratorInput,
     BinBodyGeneratorInput,
-    BinBodyCompartmentDefinition,
     BaseplateGeneratorInput,
 )
 
@@ -120,10 +124,12 @@ class _Session():
         self.originalCreateByReal = None
         self.originalCreateRectangle = []
         self.names = {}
+        self.fieldNames = {}
         self.emitted = 0
         self.baked = 0
 
-    def ensureParameter(self, name: str, value: float, unit: str) -> str:
+    def ensureParameter(self, name: str, value: float, unit: str,
+                        isConstant: bool = False) -> str:
         """Create (or reuse) a user parameter and return the name actually used.
 
         A second generation in the same document must not silently retune the geometry
@@ -139,6 +145,23 @@ class _Session():
             return self.names[key]
 
         userParameters = self.design.userParameters
+
+        # An input field assigned more than once is still one design parameter: the
+        # DTO constructors set defaults that the dialog values then overwrite, so
+        # without this the default would take the good name and the value actually
+        # used would end up as compartmentsByX2 -- and anything dimensioned against
+        # compartmentsByX would be driving nothing. Last write wins.
+        if not isConstant and name in self.fieldNames:
+            actualName = self.fieldNames[name]
+            existing = userParameters.itemByName(actualName)
+            if existing is not None:
+                try:
+                    existing.value = float(value)
+                except Exception as err:
+                    futil.log('Parametrisation: could not update %s: %s' % (actualName, err))
+                self.names[key] = actualName
+                return actualName
+
         candidate = name
         index = 1
         while True:
@@ -147,6 +170,8 @@ class _Session():
                 break
             if abs(existing.value - float(value)) < 1e-9:
                 self.names[key] = candidate
+                if not isConstant:
+                    self.fieldNames[name] = candidate
                 return candidate
             index += 1
             candidate = '%s%d' % (name, index)
@@ -158,10 +183,14 @@ class _Session():
             'Gridfinity generator',
         )
         self.names[key] = candidate
+        if not isConstant:
+            self.fieldNames[name] = candidate
         return candidate
 
-    def seed(self, name: str, value, unit: str, isLength: bool) -> Sym:
-        return Sym(self.ensureParameter(name, value, unit), value, isLength=isLength)
+    def seed(self, name: str, value, unit: str, isLength: bool,
+             isConstant: bool = False) -> Sym:
+        return Sym(self.ensureParameter(name, value, unit, isConstant),
+                   value, isLength=isLength)
 
 
 _session = None
@@ -230,7 +259,8 @@ def _installConstants(session: _Session):
         session.originalConstants[name] = value
         unit = unitFor(name, True)
         setattr(const, name, session.seed(
-            constantToParameterName(name), value, unit, unit == UNIT_LENGTH))
+            constantToParameterName(name), value, unit, unit == UNIT_LENGTH,
+            isConstant=True))
 
     # Re-derive the computed constants so their formula survives.
     for name in CONST_DERIVED:

@@ -113,6 +113,11 @@ and edge counts. Turning `baseWidth` from 42 to 50 mm moves the model correctly.
   returns a plain float and breaks the symbolic chain. An angle parameter would be
   created but would drive nothing, so it is better absent. Needs the tracer to
   understand `math.radians()`.
+* **Values that pass through `Point3D` are baked.** `Point3D.create()` is native and
+  stores plain doubles, so reading `.x`/`.z` back loses the symbol. Feature *positions*
+  therefore stay numeric even when their *sizes* are driven -- editing `binHeight` grows
+  the bin body but leaves the lip at its original Z. Editing lengths that come from
+  sketch rectangles (`baseWidth`, `baseLength`) works correctly.
 * **Circle-sketch dimensions are still baked** — screw and magnet positions
   (`7.75 mm`), diameters (`6.5 mm`). These come from `createCircleAtPointSketch` and
   `shapeUtils.simpleCylinder`, which position geometry by `Point3D` coordinates; the

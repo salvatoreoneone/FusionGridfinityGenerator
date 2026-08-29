@@ -137,3 +137,21 @@ class Sym(float):
 
     def __abs__(self):
         return self if float(self) >= 0 else -self
+
+    def __index__(self):
+        """Allow use where an integer is required, e.g. range().
+
+        Counts come from IntegerSpinnerCommandInput as ints, and seeding turns them
+        into this float subclass -- which range() rejects, since float has no
+        __index__. uniformCompartments() does exactly that with compartmentsByX/Y.
+
+        Non-integral values still raise, matching float: silently truncating a
+        dimension into an integer context would hide a real mistake.
+        """
+        value = float(self)
+        truncated = int(value)
+        if truncated != value:
+            raise TypeError(
+                'cannot use non-integral Sym (%s = %r) as an integer'
+                % (self.expression, value))
+        return truncated
