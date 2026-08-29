@@ -164,5 +164,26 @@ Two deliberate departures from what was modelled by hand:
 * **Depth is computed rather than a fixed 50 mm**, spanning base through lip, so it
   stays a through-cut at any bin height.
 
+**Reinforcement.** Notching the corner leaves less than a wall thickness between the
+relief surface and the compartment cavity. The cut faces are therefore lined with a skin
+one `wallThickness` thick, grown back towards the material, which restores it. The lining
+follows the relief exactly and is bounded by the notch, so it cannot spill outside the
+bin the way an offset cylinder would.
+
+Two API details worth keeping:
+
+* **Thicken rejects faces of a solid** (`input face cannot be from solid body`). The
+  faces are copied out as surfaces at zero offset first — the same offset-then-thicken
+  pattern as `baseGenerator.py:322-353` — and the temporary surfaces are removed after.
+* **Direction is negative** (`THICKEN_DIRECTION`). A cut face points into the void it
+  created, so the material side lies opposite its normal. The wrong sign fills the notch
+  back in rather than lining it.
+
+Measured on a 2x3x5 bin: stock 71.52878 cm3 -> 71.24397 after the cut -> 71.48603 after
+reinforcement, with the bounding box unchanged throughout (nothing added outside the
+bin) and the four relief faces still present (the notch survives). Also verified on a
+solid no-lip bin and at a 12 mm diameter that cuts well past the corner fillet; one
+solid body in every case.
+
 Customizations run *before* the tracer is removed, so their geometry is parameterised on
 the same terms as the generator's — the relief contributes 8 expressions of its own.

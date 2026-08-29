@@ -28,6 +28,11 @@ from .... import fusion360utils as futil
 
 NAME = 'Corner relief'
 
+# Which way the reinforcement grows off the relief surface. A cut face points into the
+# void it created, so the material side -- where the thinned wall is -- lies opposite
+# its normal. Verified empirically: the wrong sign fills the notch back in.
+THICKEN_DIRECTION = -1.0
+
 
 def isEnabled(context) -> bool:
     return customInputs.isCornerReliefEnabled(context.commandInputs)
@@ -39,6 +44,31 @@ def _targetBody(component: adsk.fusion.Component):
     if not solids:
         return None
     return max(solids, key=lambda body: body.volume)
+
+
+def _reliefFaces(component: adsk.fusion.Component, body: adsk.fusion.BRepBody,
+                 radius: float, corners, tolerance: float = const.DEFAULT_FILTER_TOLERANCE):
+    """The cylindrical faces the relief cut left behind.
+
+    Selected by rule rather than by index: a cylinder of exactly the relief radius whose
+    axis passes through one of the corner positions. Magnet and screw cutouts are also
+    cylinders, but neither their radius nor their axis matches, so this stays unambiguous
+    across configurations.
+    """
+    found = []
+    for face in body.faces:
+        surface = face.geometry
+        if not isinstance(surface, adsk.core.Cylinder):
+            continue
+        if abs(surface.radius - radius) > tolerance:
+            continue
+        origin = surface.origin
+        for cornerX, cornerY in corners:
+            if (abs(origin.x - float(cornerX)) < tolerance
+                    and abs(origin.y - float(cornerY)) < tolerance):
+                found.append(face)
+                break
+    return found
 
 
 def applyToBin(context):
@@ -93,3 +123,64 @@ def applyToBin(context):
 
     combineUtils.cutBody(target, commonUtils.objectCollectionFromList(tools), component)
     futil.log('%s: cut %d corners on %r' % (NAME, len(tools), target.name))
+
+    _reinforce(component, diameter, corners, binInput.wallThickness)
+
+
+def _reinforce(component: adsk.fusion.Component, diameter, corners, wallThickness):
+    """Line the relief with a wall so the notched corner does not end up too thin.
+
+    Cutting into the corner leaves less than a wall thickness between the relief surface
+    and the compartment cavity. Thickening the cut face back towards the material
+    restores it: the added skin follows the relief exactly and Fusion bounds it to the
+    face, so it cannot spill outside the bin the way an offset cylinder would.
+    """
+    target = _targetBody(component)
+    if target is None:
+        return
+
+    faces = _reliefFaces(component, target, float(diameter) / 2.0, corners)
+    if not faces:
+        futil.log('%s: no relief faces found, reinforcement skipped' % NAME)
+        return
+
+    features = component.features
+
+    # Thicken rejects faces belonging to a solid ("input face cannot be from solid
+    # body"), so copy them out as surfaces at zero offset first. Same offset-then-thicken
+    # pattern as baseGenerator.py:322-353.
+    offsetInput = features.offsetFeatures.createInput(
+        commonUtils.objectCollectionFromList(faces),
+        adsk.core.ValueInput.createByReal(0),
+        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+        False,
+    )
+    offsetFeature = features.offsetFeatures.add(offsetInput)
+    offsetFeature.name = 'Corner relief surface'
+    surfaces = [body for body in offsetFeature.bodies if not body.isSolid]
+    if not surfaces:
+        futil.log('%s: offset produced no surface, reinforcement skipped' % NAME)
+        return
+
+    surfaceFaces = []
+    for surface in surfaces:
+        surfaceFaces.extend(list(surface.faces))
+
+    thickenInput = features.thickenFeatures.createInput(
+        commonUtils.objectCollectionFromList(surfaceFaces),
+        adsk.core.ValueInput.createByReal(wallThickness * THICKEN_DIRECTION),
+        False,
+        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+        False,
+    )
+    thickenFeature = features.thickenFeatures.add(thickenInput)
+    thickenFeature.name = 'Corner relief reinforcement'
+
+    reinforcements = [body for body in thickenFeature.bodies if body.isSolid]
+    for surface in surfaces:
+        features.removeFeatures.add(surface)
+
+    if reinforcements:
+        combineUtils.joinBodies(
+            target, commonUtils.objectCollectionFromList(reinforcements), component)
+    futil.log('%s: reinforced %d relief faces' % (NAME, len(faces)))
