@@ -3,6 +3,7 @@ from .registry import (
     PARAMETRIZATION_ENABLED,
     CustomizationContext,
     addBinInputs,
+    handleBinInputChanged,
     beginGeneration,
     endGeneration,
     applyBinCustomizations,

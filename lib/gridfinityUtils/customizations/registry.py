@@ -2,7 +2,9 @@ import adsk.core, adsk.fusion, traceback
 
 from . import parametrization
 from . import inputs as customInputs
+from . import presets
 from .features import cornerRelief
+from .features import settingsStamp
 from ... import fusion360utils as futil
 
 # Translate the Python-coded parametrisation of the generators into live Fusion
@@ -22,6 +24,7 @@ PARAMETRIZATION_ENABLED = True
 # produces byte-identical output to upstream.
 REGISTERED = [
     cornerRelief,
+    settingsStamp,
 ]
 
 
@@ -70,6 +73,73 @@ def _apply(context: CustomizationContext, handlerName: str):
 def addBinInputs(commandUIState, commandInputs):
     """Append this fork's inputs to the bin dialog."""
     customInputs.addBinInputs(commandUIState, commandInputs)
+
+
+# Upstream excludes these from saved defaults; a preset should not carry them either.
+_PRESET_EXCLUDED = frozenset(['show_preview', 'show_preview_manual'])
+
+
+def _presetPayload(commandUIState):
+    ignore = list(customInputs.PRESET_CONTROL_IDS | _PRESET_EXCLUDED)
+    return commandUIState.toDict(ignoreKeys=ignore)
+
+
+def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) -> bool:
+    """Handle this fork's dialog controls.
+
+    Returns True when the event belongs to the preset controls and has been fully
+    handled, so the host can return early rather than treating a button press as an
+    ordinary value change.
+    """
+    inputId = changedInput.id
+    if inputId not in (customInputs.PRESET_SELECT_ID,
+                       customInputs.PRESET_SAVE_ID,
+                       customInputs.PRESET_DELETE_ID):
+        return False
+
+    selector = commandInputs.itemById(customInputs.PRESET_SELECT_ID)
+    nameInput = commandInputs.itemById(customInputs.PRESET_NAME_ID)
+
+    if inputId == customInputs.PRESET_SELECT_ID:
+        name = customInputs.selectedPreset(commandInputs)
+        if name:
+            state = presets.load(name)
+            if state:
+                commandUIState.initValues(state)
+                commandUIState.forceUIRefresh()
+                futil.log('Presets: loaded %r' % name)
+            else:
+                futil.log('Presets: %r could not be read' % name)
+
+    elif inputId == customInputs.PRESET_SAVE_ID:
+        if not changedInput.value:
+            return True
+        changedInput.value = False
+        name = (nameInput.value if nameInput else '').strip() or customInputs.selectedPreset(commandInputs)
+        if not name:
+            futil.log('Presets: nothing saved, no name given')
+            return True
+        if presets.save(name, _presetPayload(commandUIState)):
+            if nameInput:
+                nameInput.value = ''
+            customInputs.populateSelector(selector, name)
+            futil.log('Presets: saved %r to %s' % (name, presets.presetsPath()))
+
+    elif inputId == customInputs.PRESET_DELETE_ID:
+        if not changedInput.value:
+            return True
+        changedInput.value = False
+        name = customInputs.selectedPreset(commandInputs)
+        if name and presets.delete(name):
+            customInputs.populateSelector(selector, presets.NONE_LABEL)
+            futil.log('Presets: deleted %r' % name)
+
+    if refresh is not None:
+        try:
+            refresh()
+        except Exception as err:
+            futil.log('Presets: refresh failed: %s' % err)
+    return True
 
 
 def beginGeneration(design: adsk.fusion.Design):

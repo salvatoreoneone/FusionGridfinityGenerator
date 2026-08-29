@@ -166,6 +166,51 @@ values — `BIN_CORNER_FILLET_RADIUS` is 4 mm while the `binCornerFilletRadius` 
 mechanism stops a second generation in one document from retuning the first.
 
 
+## Presets
+
+`presets.py`, plus the Presets group in `inputs.py`.
+
+Named presets for the bin dialog, stored in **one file outside the bundle**:
+`~/Documents/GridfinityPresets/presets.json`. The dialog shows the full path read-only,
+so where they live is never a guess. Upstream's single anonymous default set lives inside
+the add-in folder and is wiped on reinstall; this is not.
+
+Save under a name, pick from the dropdown to load every dialog value, delete the
+selected one. Reusing a name overwrites.
+
+### Why not in the Fusion project
+
+That was the first choice, and it was measured and rejected:
+
+| | |
+|---|---|
+| `DataFolder.uploadFile` | works, but takes ~5.5 s per save |
+| file extension | Fusion rewrote `.json` to `ext=htm` |
+| `DataFile.download` | callback-only (`missing 1 required positional argument: 'handler'`) |
+
+A preset dropdown has to populate when the dialog opens, and it cannot do that off a
+callback-only read without stalling. The extension rewriting also left it unproven that
+the content survives a round-trip at all. Stamping (below) covers the same need from the
+other direction.
+
+### Settings stamp — `features/settingsStamp.py`
+
+Every generated bin records the settings that produced it, as a design attribute. Read
+it back with:
+
+    design.attributes.itemByName('GridfinityGenerator', 'settings').value
+
+So "which settings made this?" is answerable from any old design, whether or not a
+preset was ever saved. Re-stamping replaces rather than accumulating.
+
+### Known limitation
+
+Presets carry the dialog inputs, not the **custom compartments table**. Restoring that
+would mean rebuilding table rows through upstream's own helpers, which is far more
+coupling than the rest of this fork needs. Uniform compartment grids are covered, since
+those are plain inputs.
+
+
 ## Registered customizations
 
 ### Corner relief — `features/cornerRelief.py`

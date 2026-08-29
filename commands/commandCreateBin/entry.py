@@ -721,6 +721,8 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     inputs = args.inputs
     global commandUIState
     futil.log(f'{CMD_NAME} Input Changed Event fired from a change to {changed_input.id}')
+    if customizations.handleBinInputChanged(changed_input, inputs, commandUIState, refreshUi):
+        return
     if changed_input.id == INPUT_CHANGES_SAVE_DEFAULTS:
         saveUIInputsAsDefaults()
     elif changed_input.id == INPUT_CHANGES_RESET_TO_DEFAULTS:
