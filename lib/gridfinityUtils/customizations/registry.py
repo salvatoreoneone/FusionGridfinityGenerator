@@ -1,6 +1,12 @@
 import adsk.core, adsk.fusion, traceback
 
+from . import parametrization
 from ... import fusion360utils as futil
+
+# Translate the Python-coded parametrisation of the generators into live Fusion
+# parameters, so generated models rebuild from named expressions rather than baked
+# numbers. Set to False to get byte-identical upstream output.
+PARAMETRIZATION_ENABLED = True
 
 # Registered customizations, applied in registration order.
 #
@@ -57,6 +63,23 @@ def _apply(context: CustomizationContext, handlerName: str):
         handler(context)
 
 
+def beginGeneration(design: adsk.fusion.Design):
+    """Called before any geometry is built.
+
+    The parametrisation tracer has to be active *while* the generators run -- it works
+    by observing their arithmetic -- so it cannot be installed from the post-generation
+    hook like ordinary customizations.
+    """
+    if not PARAMETRIZATION_ENABLED:
+        return
+    parametrization.install(design)
+
+
+def endGeneration():
+    """Called after geometry is built, before customizations run."""
+    parametrization.uninstall()
+
+
 def applyBinCustomizations(
     design: adsk.fusion.Design,
     targetComponent: adsk.fusion.Component,
@@ -64,6 +87,7 @@ def applyBinCustomizations(
     binBodyInput=None,
     baseGeneratorInput=None,
 ):
+    endGeneration()
     if not REGISTERED:
         return
     _apply(
@@ -84,6 +108,7 @@ def applyBaseplateCustomizations(
     commandInputs: adsk.core.CommandInputs,
     baseplateGeneratorInput=None,
 ):
+    endGeneration()
     if not REGISTERED:
         return
     _apply(

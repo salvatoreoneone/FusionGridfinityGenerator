@@ -424,6 +424,7 @@ def generateBaseplate(args: adsk.core.CommandEventArgs):
         baseplateName = 'Gridfinity baseplate {}x{}'.format(int(inputsState.plateLength), int(inputsState.plateWidth))
 
         originalTimelineCount = des.timeline.count
+        customizations.beginGeneration(des)
         if des.designIntent == adsk.fusion.DesignIntentTypes.HybridDesignIntentType:
             # create new component, only allowed in hybrid intent type
             newCmpOcc = adsk.fusion.Occurrences.cast(root.occurrences).addNewComponent(adsk.core.Matrix3D.create())
