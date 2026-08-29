@@ -37,6 +37,34 @@ the plugin's own timeline group rather than dangling after it.
 Placed before the `ParametricDesignType` check because that block only creates the
 timeline group; the customization itself must run either way.
 
+### `commands/commandCreateBin/entry.py` — bug fix, 2 lines changed
+
+**The only place upstream logic is modified rather than extended.** Everything else in
+this fork is additive.
+
+Shelled bins left a `xyClearance` gap between the label tab and the bin wall on each
+side. The shell is cut at `wallThickness - xyClearance` (entry.py:1017, 1024), but the
+tab was positioned at `wallThickness` and shortened by `wallThickness * 2 +
+xyClearance * 2`, so it fell short of the wall by `xyClearance` per side.
+
+| line | change |
+|---|---|
+| tab origin X | `wallThickness` -> `wallThickness - xyClearance` |
+| tab length | dropped the `- xyClearance * 2` term |
+
+The length simplifies exactly: `tabLength * baseWidth - 2*xyClearance -
+2*(wallThickness - xyClearance)` reduces to `tabLength * baseWidth - 2*wallThickness`.
+
+Only the shelled path is affected. The hollow path builds the tab full width and
+intersects it with the compartment cutout (`binBodyGenerator.py:143`), so it cannot
+drift out of alignment this way.
+
+Verified on a 2x1x1 shelled bin with a tab at base 32x49 mm: no planar faces remain at
+`wallThickness` (0.12 / 6.23), and the tab sides now coincide with the shell wall at
+0.095 / 6.255, merging into it.
+
+**If upstream fixes this themselves, drop this change rather than merging both.**
+
 ---
 
 ## Notes and gotchas
