@@ -5,6 +5,7 @@ from . import inputs as customInputs
 from . import presets
 from .features import cornerRelief
 from .features import settingsStamp
+from .features import shelledDividers
 from ... import fusion360utils as futil
 
 # Translate the Python-coded parametrisation of the generators into live Fusion
@@ -23,6 +24,7 @@ PARAMETRIZATION_ENABLED = True
 # Empty by default: with nothing registered the hooks are inert and the add-in
 # produces byte-identical output to upstream.
 REGISTERED = [
+    shelledDividers,
     cornerRelief,
     settingsStamp,
 ]

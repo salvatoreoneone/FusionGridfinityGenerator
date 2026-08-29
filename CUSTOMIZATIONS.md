@@ -212,6 +212,45 @@ callback-only read without stalling. The extension rewriting also left it unprov
 the content survives a round-trip at all. Stamping (below) covers the same need from the
 other direction.
 
+### Shelled dividers — `features/shelledDividers.py`
+
+Makes the compartment grid work for shelled bins. `entry.py` sets
+`isSolid = isSolid or isShelled` and `binBodyGenerator.py:112` builds compartments only
+`if not input.isSolid`, so **shelled bins never get compartments** — the Grid width and
+length inputs sit in the dialog doing nothing. This adds divider walls where the hollow
+path cuts compartment cavities. Hollow bins are untouched.
+
+Translated from a hand-built model: a Rib on a midplane between the two outer side faces,
+drawn from a line at the top and grown down until it met material.
+
+**Ribs cannot be reproduced.** `adsk.fusion.RibFeatures` exposes only
+`count`/`item`/`itemByName` — no `createInput`, no `add` — and there is no
+`RibFeatureInput` class. Same for Web. The wall is therefore built as a solid box and
+joined, which means computing what the rib got for free.
+
+Spacing mirrors the hollow path exactly (`binBodyGenerator.py:118-122`), so both bin
+types divide identically. On the hand-built 2x1 bin that formula lands the wall at
+3.115..3.235 cm — precisely where the rib measured.
+
+Three details worth keeping:
+
+* Walls run the **full footprint** in their perpendicular direction rather than stopping
+  at the cavity, so no sliver of gap is left where the cavity wall fillets curve away. A
+  join is a no-op where material already exists.
+* They extend one shell thickness **below** the cavity floor for the same reason, and the
+  result is clamped to the body's own underside — overshooting would push material out of
+  the bottom of the bin.
+* The top is **not** padded. Material above the rim would break stacking.
+
+The cavity floor is found by rule, not derived: it depends on the shell operation and on
+whether a lip is present. The search is bounded to faces above `z = 0`, because the base
+foot's chamfered underside is horizontal, sits inside the cavity footprint and is large —
+without that bound it wins on area and drives the dividers below the bin, which is
+exactly what the first version did.
+
+Verified at grid 2x1 (one wall, matching the rib) and 3x2 (three walls, both axes):
+bounding box unchanged top and bottom, single solid body in each case.
+
 ### Settings stamp — `features/settingsStamp.py`
 
 Every generated bin records the settings that produced it, as a design attribute. Read
