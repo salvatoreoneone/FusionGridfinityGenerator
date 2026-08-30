@@ -4,6 +4,7 @@ from . import parametrization
 from . import inputs as customInputs
 from . import presets
 from .features import cornerRelief
+from .features import fullHeightDividers
 from .features import settingsStamp
 from .features import shelledDividers
 from .features import shelledScoop
@@ -29,6 +30,10 @@ REGISTERED = [
     # After the dividers: they split the front wall into one face per cell, so the
     # scoop then lands per cell the way hollow bins scoop each compartment.
     shelledScoop,
+    # The hollow counterpart: brings its dividers up to the rim, where the shelled
+    # ones already finish. Independent of the two above -- each is gated on its own
+    # bin type -- and before the relief, which cuts through whatever is there.
+    fullHeightDividers,
     cornerRelief,
     settingsStamp,
 ]
