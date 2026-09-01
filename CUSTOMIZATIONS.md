@@ -550,7 +550,8 @@ diameter input defaulting to 5 mm.
 Translated from a hand-built model — four Ø5 mm circles on the XY plane, centres
 projected from the generated body's corners, cut two-sided through everything. Verified
 against that model: bounding box, volume (71.24397 cm3), face count (219) and edge
-count (483) all identical.
+count (483) all identical — that is the cut on its own, before the reinforcement below,
+which adds material the hand model has not got.
 
 Two deliberate departures from what was modelled by hand:
 
@@ -564,26 +565,56 @@ Two deliberate departures from what was modelled by hand:
 * **Depth is computed rather than a fixed 50 mm**, spanning base through lip, so it
   stays a through-cut at any bin height.
 
-**Reinforcement.** Notching the corner leaves less than a wall thickness between the
-relief surface and the compartment cavity. The cut faces are therefore lined with a skin
-one `wallThickness` thick, grown back towards the material, which restores it. The lining
-follows the relief exactly and is bounded by the notch, so it cannot spill outside the
-bin the way an offset cylinder would.
+**Reinforcement.** The relief is centred on the *sharp* footprint corner, which sits
+`sqrt(2) * R - R` outside the filleted outer surface — 1.553 mm at the stock 3.75 mm
+corner radius — so a relief of radius r eats `r - 0.414 * R` into the corner. All the
+corner has to give is one wall thickness, and less than that on a shelled bin, where the
+shell is `wallThickness - xyClearance` (`commandCreateBin/entry.py:1019`). Past that the
+relief opens straight into the cavity.
 
-Two API details worth keeping:
+That is not an edge case at the default Ø5 mm: it cuts 0.947 mm into the corner, so on a
+shelled bin it breaks through at any wall thinner than 1.197 mm. At 0.8 mm (0.55 mm of
+shell) it leaves a 49° slot 2.07 mm across running the full height of the bin, and 1.2 mm
+lands 3 µm inside the limit, which is a knife edge rather than a wall. Hollow bins have
+the whole `wallThickness` and breach from Ø4.71 mm at 0.8 mm, Ø5.51 mm at 1.2 mm.
 
-* **Thicken rejects faces of a solid** (`input face cannot be from solid body`). The
-  faces are copied out as surfaces at zero offset first — the same offset-then-thicken
-  pattern as `baseGenerator.py:322-353` — and the temporary surfaces are removed after.
-* **Direction is negative** (`THICKEN_DIRECTION`). A cut face points into the void it
-  created, so the material side lies opposite its normal. The wrong sign fills the notch
-  back in rather than lining it.
+So each corner is **filled out to `relief radius + wallThickness` before the cut**,
+clipped to a rebuilt bin outline, which gives the relief a full wall thickness to cut
+into at any diameter. The outline is the footprint filleted the way the body itself is,
+chamfered below z=0 by the base's top section height so it follows the base taper; it is
+at or inside the real perimeter everywhere, so the slug cannot reach outside the bin.
+How far the slug runs in z is read off the bin's bounding box rather than recomputed, so
+it stays inside the material with the base or the body switched off. A join is a no-op
+where material already exists, which is what a solid bin gets.
 
-Measured on a 2x3x5 bin: stock 71.52878 cm3 -> 71.24397 after the cut -> 71.48603 after
-reinforcement, with the bounding box unchanged throughout (nothing added outside the
-bin) and the four relief faces still present (the notch survives). Also verified on a
-solid no-lip bin and at a 12 mm diameter that cuts well past the corner fillet; one
-solid body in every case.
+**The slug carries a collar into the lip.** The thin corner does not end at the body: the
+lip is thinned back to the wall where the two meet — `lipBottomChamferExtrude`
+(`binBodyGenerator.py:76-84`) is a box inset by one `wallThickness`, chamfered at 45
+degrees — so the lip's inner face starts at `cornerOffset + wallThickness` from the corner
+and climbs to full rim thickness only `relief radius - cornerOffset` higher up. Over that
+stretch the relief cuts the same thin corner it cuts below, so the slug carries straight
+on at its own radius until the lip's chamfer has grown out to meet it, and the corner
+wall runs unbroken from the base into the rim. On the Ø5 mm / 0.8 mm shelled bin that is
+a 0.947 mm collar at 3.3 mm radius.
+
+**The collar is clamped to the recess wall.** Above the body, the void being filled is the
+seat the next bin's foot drops into, not the compartment. The recess sits at
+`cornerOffset + BIN_BASE_TOP_SECTION_HEIGH - 2 * xyClearance` from the corner —
+`binBodyLipGenerator.py:108-122` cuts it with a base body oversized by `xyClearance * 2`
+— so the collar stops there and the foot keeps its own clearance. The clamp starts biting
+at about a 1.2 mm wall, where `relief radius + wallThickness` would otherwise stand in the
+seat: a stacked pair of 1x1x3 bins at the 25 mm pitch measured 0.002016 cm3 of
+interference across the four corners when the slug ran the full height unclamped, every
+lump of it bounded by the cylinder at `relief radius + wallThickness`.
+
+**Why not thicken the cut faces.** The first version lined the relief afterwards: copy
+the cut faces out as surfaces at zero offset (thicken rejects faces of a solid — `input
+face cannot be from solid body`), thicken them back towards the material, join. It
+restores a *thinned* corner, and that is all it can do — a thicken follows the faces that
+survived the cut, and where the relief has already breached the cavity there is no face
+over the breach to follow. The lining came out on either side of the hole and left the
+hole. Adding the material first needs no faces to be found at all, which also retires the
+`_reliefFaces` search.
 
 Customizations run *before* the tracer is removed, so their geometry is parameterised on
-the same terms as the generator's — the relief contributes 8 expressions of its own.
+the same terms as the generator's, the relief's own arithmetic included.

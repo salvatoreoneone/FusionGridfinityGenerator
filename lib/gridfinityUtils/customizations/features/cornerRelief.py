@@ -19,19 +19,17 @@ Two deliberate departures from that model:
   a through-cut at any bin height.
 """
 
+import math
+
 import adsk.core, adsk.fusion
 
 from .. import inputs as customInputs
 from .. import parametrization
-from ... import const, shapeUtils, combineUtils, commonUtils
+from ... import (const, shapeUtils, combineUtils, commonUtils, filletUtils, faceUtils,
+                 geometryUtils)
 from .... import fusion360utils as futil
 
 NAME = 'Corner relief'
-
-# Which way the reinforcement grows off the relief surface. A cut face points into the
-# void it created, so the material side -- where the thinned wall is -- lies opposite
-# its normal. Verified empirically: the wrong sign fills the notch back in.
-THICKEN_DIRECTION = -1.0
 
 
 def isEnabled(context) -> bool:
@@ -44,31 +42,6 @@ def _targetBody(component: adsk.fusion.Component):
     if not solids:
         return None
     return max(solids, key=lambda body: body.volume)
-
-
-def _reliefFaces(body: adsk.fusion.BRepBody, radius: float, corners,
-                 tolerance: float = const.DEFAULT_FILTER_TOLERANCE):
-    """The cylindrical faces the relief cut left behind.
-
-    Selected by rule rather than by index: a cylinder of exactly the relief radius whose
-    axis passes through one of the corner positions. Magnet and screw cutouts are also
-    cylinders, but neither their radius nor their axis matches, so this stays unambiguous
-    across configurations.
-    """
-    found = []
-    for face in body.faces:
-        surface = face.geometry
-        if not isinstance(surface, adsk.core.Cylinder):
-            continue
-        if abs(surface.radius - radius) > tolerance:
-            continue
-        origin = surface.origin
-        for cornerX, cornerY in corners:
-            if (abs(origin.x - float(cornerX)) < tolerance
-                    and abs(origin.y - float(cornerY)) < tolerance):
-                found.append(face)
-                break
-    return found
 
 
 def applyToBin(context):
@@ -87,6 +60,8 @@ def applyToBin(context):
         customInputs.cornerReliefDiameter(context.commandInputs),
         parametrization.UNIT_LENGTH,
     )
+    # Not float(): the traced value carries the expression the parameter is named for.
+    radius = diameter / 2
 
     # Same expressions the body generator uses (binBodyGenerator.py:33-36), so they
     # carry the same derivations rather than re-deriving them by hand.
@@ -108,13 +83,18 @@ def applyToBin(context):
         (footprintWidth, footprintLength),
     ]
 
+    # Before the cut, not after: the relief has to have a wall to cut into.
+    _reinforce(component, target, corners, radius, binInput.wallThickness,
+               binInput.xyClearance, footprintWidth, footprintLength,
+               binInput.binCornerFilletRadius, bodyHeight)
+
     tools = []
     for cornerX, cornerY in corners:
         tool = shapeUtils.simpleCylinder(
             component.xYConstructionPlane,
             bottom,
             height,
-            diameter / 2,
+            radius,
             adsk.core.Point3D.create(cornerX, cornerY, bottom),
             component,
         )
@@ -124,63 +104,153 @@ def applyToBin(context):
     combineUtils.cutBody(target, commonUtils.objectCollectionFromList(tools), component)
     futil.log('%s: cut %d corners on %r' % (NAME, len(tools), target.name))
 
-    _reinforce(component, diameter, corners, binInput.wallThickness)
 
+def _reinforce(component: adsk.fusion.Component, target: adsk.fusion.BRepBody, corners,
+               reliefRadius, wallThickness, xyClearance, footprintWidth, footprintLength,
+               cornerFilletRadius, bodyHeight):
+    """Fill each corner with a slug of material before the relief is cut.
 
-def _reinforce(component: adsk.fusion.Component, diameter, corners, wallThickness):
-    """Line the relief with a wall so the notched corner does not end up too thin.
+    The relief is centred on the *sharp* footprint corner, which sits `sqrt(2) * R - R`
+    outside the filleted outer surface -- 1.553 mm at the stock 3.75 mm corner radius --
+    so a relief of radius r eats `r - 0.414 * R` into the corner. All the corner has to
+    give is one wall thickness, and less than that on a shelled bin, where the shell is
+    `wallThickness - xyClearance` (commandCreateBin/entry.py:1019). Past that the relief
+    opens straight into the cavity: a 5 mm relief cuts 0.947 mm into a 0.55 mm shelled
+    wall and leaves a 2 mm wide slot running the full height of the bin.
 
-    Cutting into the corner leaves less than a wall thickness between the relief surface
-    and the compartment cavity. Thickening the cut face back towards the material
-    restores it: the added skin follows the relief exactly and Fusion bounds it to the
-    face, so it cannot spill outside the bin the way an offset cylinder would.
+    Filling each corner out to `relief radius + wallThickness` first, clipped to the bin's
+    own outline, gives the relief a full wall thickness to cut into at any diameter.
+
+    This replaces lining the cut faces afterwards with a thicken. A thicken can only
+    follow the faces that survived the cut, and where the relief has already breached the
+    cavity there is no face over the breach to follow -- so it restored a thinned corner
+    but could not close an open one, which is the case that needs it. Adding material
+    first needs no faces to be found at all.
     """
-    target = _targetBody(component)
-    if target is None:
+    cornerOffset = (math.sqrt(2) - 1) * cornerFilletRadius
+    radius = reliefRadius + wallThickness
+
+    # A relief that does not reach the outer surface cuts nothing, and a slug clipped to
+    # the outline would come out empty, which a combine will not accept.
+    if radius <= cornerOffset + const.DEFAULT_FILTER_TOLERANCE:
+        futil.log('%s: relief does not reach the bin, nothing to reinforce' % NAME)
         return
 
-    faces = _reliefFaces(target, float(diameter) / 2.0, corners)
-    if not faces:
-        futil.log('%s: no relief faces found, reinforcement skipped' % NAME)
+    # The body says how far the slug runs: into the base only when a base was generated,
+    # and no higher than the material itself. The bounding box is what answers both, so
+    # the slug stays inside the bin whatever the dialog left switched off.
+    box = target.boundingBox
+    bodyTop = min(bodyHeight, box.maxPoint.z)
+    if bodyTop <= const.DEFAULT_FILTER_TOLERANCE:
+        futil.log('%s: nothing above the base to reinforce' % NAME)
         return
+    hasBase = box.minPoint.z < -const.DEFAULT_FILTER_TOLERANCE
+    bottom = -const.BIN_BASE_TOP_SECTION_HEIGH if hasBase else 0.0
 
-    features = component.features
+    collarRadius, collarHeight = _collar(radius, wallThickness, xyClearance, cornerOffset,
+                                         box.maxPoint.z - bodyTop)
 
-    # Thicken rejects faces belonging to a solid ("input face cannot be from solid
-    # body"), so copy them out as surfaces at zero offset first. Same offset-then-thicken
-    # pattern as baseGenerator.py:322-353.
-    offsetInput = features.offsetFeatures.createInput(
-        commonUtils.objectCollectionFromList(faces),
-        adsk.core.ValueInput.createByReal(0),
-        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
-        False,
+    slugs = []
+    for cornerX, cornerY in corners:
+        slug = shapeUtils.simpleCylinder(
+            component.xYConstructionPlane,
+            bottom,
+            bodyTop - bottom,
+            radius,
+            adsk.core.Point3D.create(cornerX, cornerY, bottom),
+            component,
+        )
+        slug.name = 'Corner relief reinforcement'
+        if collarHeight > const.DEFAULT_FILTER_TOLERANCE:
+            collar = shapeUtils.simpleCylinder(
+                component.xYConstructionPlane,
+                bodyTop,
+                collarHeight,
+                collarRadius,
+                adsk.core.Point3D.create(cornerX, cornerY, bodyTop),
+                component,
+            )
+            collar.name = 'Corner relief collar'
+            combineUtils.joinBodies(
+                slug, commonUtils.objectCollectionFromList([collar]), component)
+        outline = _outline(component, footprintWidth, footprintLength, cornerFilletRadius,
+                           bottom, bodyTop + collarHeight - bottom, hasBase)
+        combineUtils.intersectBody(
+            slug, commonUtils.objectCollectionFromList([outline]), component)
+        slugs.append(slug)
+
+    combineUtils.joinBodies(target, commonUtils.objectCollectionFromList(slugs), component)
+    futil.log('%s: reinforced %d corners out to %.4f, collar %.4f x %.4f'
+              % (NAME, len(slugs), radius, collarRadius, collarHeight))
+
+
+def _collar(radius, wallThickness, xyClearance, cornerOffset, lipHeight):
+    """How far the slug carries on above the body, and how wide it may be up there.
+
+    The wall does not simply stop at the body: the lip is thinned back to the wall where
+    the two meet (`lipBottomChamferExtrude`, binBodyGenerator.py:76-84 -- a box inset by
+    one `wallThickness`, chamfered at 45 degrees), so its inner face starts at
+    `cornerOffset + wallThickness` from the corner and only reaches full rim thickness
+    `radius - cornerOffset - wallThickness` higher up. Over that stretch the relief is
+    cutting into the same thin corner it cuts through below, and stopping the slug at the
+    body leaves it open again -- a slot from the body top up to where the lip's own
+    material has grown past the relief. So the slug carries straight on to where the lip
+    can take over, which is where its chamfer has grown out to the slug's own radius.
+
+    The collar cannot be allowed past the **recess wall**, though: above the body the void
+    it is filling is the seat the next bin's foot drops into, not the compartment. The
+    recess sits at `cornerOffset + BIN_BASE_TOP_SECTION_HEIGH - 2 * xyClearance` from the
+    corner (binBodyLipGenerator.py:108-122 cuts it with a base body oversized by
+    `xyClearance * 2`), so clamping there keeps the foot's own clearance intact. It bites
+    from about a 1.2 mm wall up, where `radius` would otherwise stand in the seat: a
+    stacked pair measured 0.002016 cm3 of interference at the four corners with an
+    unclamped slug running the full height.
+    """
+    seatLimit = cornerOffset + const.BIN_BASE_TOP_SECTION_HEIGH - xyClearance * 2
+    collarRadius = min(radius, seatLimit)
+    collarHeight = max(0.0, min(collarRadius - cornerOffset - wallThickness, lipHeight))
+    return collarRadius, collarHeight
+
+
+def _outline(component: adsk.fusion.Component, footprintWidth, footprintLength,
+             cornerFilletRadius, bottom, height, hasBase):
+    """The bin's outer envelope over the height a slug spans.
+
+    The footprint, filleted the way the body itself is (binBodyGenerator.py:52-57), so a
+    slug clipped to it cannot spill outside the bin the way a bare cylinder would.
+
+    Below z=0 the base tapers away from the footprint, so the outline is chamfered by the
+    base's own top section height, at the 45 degrees baseGenerator.py:151-160 chamfers it
+    with. That is the tighter of the two profiles at every depth -- the real base holds
+    the full footprint for the first `xyClearance` of it, because its feet are trimmed to
+    the footprint by a vertical cut (baseGenerator.py:400-450) -- so the outline stays
+    inside the base, which is the side to err on.
+    """
+    body = shapeUtils.simpleBox(
+        component.xYConstructionPlane,
+        bottom,
+        footprintWidth,
+        footprintLength,
+        height,
+        adsk.core.Point3D.create(0, 0, bottom),
+        component,
     )
-    offsetFeature = features.offsetFeatures.add(offsetInput)
-    offsetFeature.name = 'Corner relief surface'
-    surfaces = [body for body in offsetFeature.bodies if not body.isSolid]
-    if not surfaces:
-        futil.log('%s: offset produced no surface, reinforcement skipped' % NAME)
-        return
+    body.name = 'Corner relief outline'
 
-    surfaceFaces = []
-    for surface in surfaces:
-        surfaceFaces.extend(list(surface.faces))
-
-    thickenInput = features.thickenFeatures.createInput(
-        commonUtils.objectCollectionFromList(surfaceFaces),
-        adsk.core.ValueInput.createByReal(wallThickness * THICKEN_DIRECTION),
-        False,
-        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
-        False,
+    # Picked out as the vertical edges rather than by length: the outline's height comes
+    # from the body, so it could coincide with the footprint's own dimensions.
+    filletUtils.createFillet(
+        [edge for edge in body.edges if geometryUtils.isCollinearToZ(edge)],
+        cornerFilletRadius,
+        True,
+        component,
     )
-    thickenFeature = features.thickenFeatures.add(thickenInput)
-    thickenFeature.name = 'Corner relief reinforcement'
 
-    reinforcements = [body for body in thickenFeature.bodies if body.isSolid]
-    for surface in surfaces:
-        features.removeFeatures.add(surface)
+    if hasBase:
+        filletUtils.createChamfer(
+            commonUtils.objectCollectionFromList(list(faceUtils.getBottomFace(body).edges)),
+            const.BIN_BASE_TOP_SECTION_HEIGH,
+            component,
+        )
 
-    if reinforcements:
-        combineUtils.joinBodies(
-            target, commonUtils.objectCollectionFromList(reinforcements), component)
-    futil.log('%s: reinforced %d relief faces' % (NAME, len(faces)))
+    return body
