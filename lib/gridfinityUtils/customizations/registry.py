@@ -8,6 +8,7 @@ from .features import fullHeightDividers
 from .features import settingsStamp
 from .features import shelledDividers
 from .features import shelledScoop
+from .features import solidBase
 from ... import fusion360utils as futil
 
 # Translate the Python-coded parametrisation of the generators into live Fusion
@@ -34,6 +35,9 @@ REGISTERED = [
     # ones already finish. Independent of the two above -- each is gated on its own
     # bin type -- and before the relief, which cuts through whatever is there.
     fullHeightDividers,
+    # Independent of the dividers entirely: it works on the base rather than the cavity.
+    # Still before the relief, which has to cut through the material it adds.
+    solidBase,
     cornerRelief,
     settingsStamp,
 ]
@@ -91,7 +95,9 @@ _PRESET_EXCLUDED = frozenset(['show_preview', 'show_preview_manual'])
 
 
 def _presetPayload(commandUIState):
-    ignore = list(customInputs.PRESET_CONTROL_IDS | _PRESET_EXCLUDED)
+    ignore = list(customInputs.PRESET_CONTROL_IDS
+                  | customInputs.TRANSIENT_CONTROL_IDS
+                  | _PRESET_EXCLUDED)
     return commandUIState.toDict(ignoreKeys=ignore)
 
 
@@ -103,6 +109,22 @@ def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) 
     ordinary value change.
     """
     inputId = changedInput.id
+
+    # Whether a bin still stacks depends on where its dividers land, which nothing else
+    # in the dialog shows. Recomputed on every change; the box is cheap to write.
+    customInputs.updateDividerWarning(commandInputs)
+
+    if inputId == customInputs.CUSTOM_GROUP_ID:
+        # Claimed for the same reason as the preset group below: upstream registers every
+        # child of an expanded group (commandCreateBin/entry.py:741-744), which would pull
+        # the read-only warning box into saved defaults. The real settings in this group
+        # are registered explicitly by addBinInputs, so nothing is lost by claiming it.
+        commandUIState.onInputUpdate(changedInput)
+        customInputs.forgetTransientControls(commandUIState)
+        if refresh is not None:
+            refresh()
+        customInputs.updateDividerWarning(commandInputs)
+        return True
 
     if inputId == customInputs.PRESET_GROUP_ID:
         # Claimed so upstream's group handler never registers the children. Keep the
@@ -120,6 +142,7 @@ def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) 
 
     # Clear anything a previous session's defaults may already have polluted.
     customInputs.forgetPresetControls(commandUIState)
+    customInputs.forgetTransientControls(commandUIState)
 
     selector = commandInputs.itemById(customInputs.PRESET_SELECT_ID)
     nameInput = commandInputs.itemById(customInputs.PRESET_NAME_ID)
@@ -180,8 +203,10 @@ def handleBinInputChanged(changedInput, commandInputs, commandUIState, refresh) 
         except Exception as err:
             futil.log('Presets: refresh failed: %s' % err)
 
-    # Set last: refresh() and forceUIRefresh() run first, so the message is not
-    # overwritten by the redraw it triggers.
+    # Set last: refresh() and forceUIRefresh() run first, so neither message is
+    # overwritten by the redraw it triggers. A loaded preset can change bin size, grid or
+    # divider mode, so the warning has to be recomputed here too.
+    customInputs.updateDividerWarning(commandInputs)
     if status:
         customInputs.setPresetStatus(commandInputs, status)
     return True

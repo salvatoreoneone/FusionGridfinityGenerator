@@ -36,9 +36,11 @@ def _stamp(context):
     if uiState is None:
         return
     try:
-        # The preset controls describe the preset machinery, not the bin.
+        # The preset controls describe the preset machinery, not the bin, and the
+        # warning box is feedback about the settings rather than one of them.
         payload = json.dumps(
-            uiState.toDict(ignoreKeys=list(customInputs.PRESET_CONTROL_IDS)),
+            uiState.toDict(ignoreKeys=list(customInputs.PRESET_CONTROL_IDS
+                                           | customInputs.TRANSIENT_CONTROL_IDS)),
             sort_keys=True)
     except Exception as err:
         futil.log('%s: could not serialise settings: %s' % (NAME, err))

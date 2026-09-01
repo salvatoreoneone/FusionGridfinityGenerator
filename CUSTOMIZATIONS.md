@@ -228,52 +228,168 @@ drawn from a line at the top and grown down until it met material.
 `RibFeatureInput` class. Same for Web. The wall is therefore built as a solid box and
 joined, which means computing what the rib got for free.
 
-Dividers sit on gridfinity **unit boundaries**, not at equal fractions of the cavity. A
-bin is a whole number of units and a divider separates whole units, so the boundary after
-k units is at `k * baseWidth - xyClearance`. On a 2u bin with a 32 mm base that is 3.175,
-and a 1.2 mm wall centred there spans 3.115..3.235 — precisely where the hand-built rib
-measured.
+Dividers sit on gridfinity **unit boundaries** while there are units enough to go round.
+A bin is a whole number of units and a divider separates whole units, so the boundary
+after k units is at `k * baseWidth - xyClearance`. On a 2u bin with a 32 mm base that is
+3.175, and a 1.2 mm wall centred there spans 3.115..3.235 — precisely where the
+hand-built rib measured. Compartment sizes are whole units, the remainder going to the
+leading compartments: a 5u bin split into 2 gives 3u then 2u.
 
-Compartment sizes are whole units, distributed as evenly as the units allow with the
-remainder going to the leading compartments: a 5u bin split into 2 gives 3u then 2u. A
-count above the unit count cannot be built, so it clamps, silently in the model and with
-a line in the Text Commands log.
+**More compartments than units falls back to equal fractions of the cavity**, the rule
+the hollow path uses. It used to clamp instead, which is why a bin **1u across produced
+no dividers at all**: `clampedCount(1, n)` collapsed the count to 1, and one compartment
+has no divider behind it. That was the bug — the Grid inputs looked live and did nothing.
 
-This deliberately **differs from the hollow path**, which divides the cavity into equal
-fractions. The two agree only when the compartment count equals the unit count. At 2
-units with 3 compartments the equal-fraction rule puts walls at 2.13 and 4.22, aligned to
-nothing — which is what the first version shipped.
+The fallback places a wall so it *ends* where the next compartment starts, one thickness
+before `cavityMin + k * (cell + thickness)`, the same relation upstream's cutouts have
+(`binBodyGenerator.py:125`). Getting that off by one thickness makes the compartments
+unequal and is invisible in a screenshot.
+
+Which walls may then reach the rim is `dividerRules`' decision, not this module's — see
+**Divider height** below.
 
 Three details worth keeping:
 
 * Walls run the **full footprint** in their perpendicular direction rather than stopping
   at the cavity, so no sliver of gap is left where the cavity wall fillets curve away. A
   join is a no-op where material already exists.
-* They extend one shell thickness **below** the cavity floor for the same reason, and the
-  result is clamped to the body's own underside — overshooting would push material out of
-  the bottom of the bin.
+* They stand on the **tub floor**, the deepest point of the interior. `simpleShell`
+  hollows the whole solid including the base feet, so every gridfinity unit's interior
+  bottoms out at `bodyBottom + shell` — on a 25 mm height unit that is z = -0.405, well
+  below zero. This is the same floor the scoop lands its ramps on.
 * The top is **not** padded. Material above the rim would break stacking.
 
-The cavity floor is found by rule, not derived: it depends on the shell operation and on
-whether a lip is present. It is the **lowest** qualifying horizontal face — not the
-largest, and bounded to faces above `z = 0`.
+**The floor used to be searched for, and the search was wrong.** `cavityFloor()` took the
+lowest horizontal face above `z = 0`, which on a shelled bin is a 0.095 sliver at the rim
+of the shell — the scoop's own notes had already said so and refused to reuse it. The
+walls therefore started at z = 0 and hung the full 5 mm depth of the base above the floor,
+with a gap underneath wide enough to lose parts through. It is now computed, and the
+function is gone.
 
-Both of those bounds were learned the hard way:
+Reaching below `z = 0` is what makes the clip necessary: down there the bin is no longer a
+prism but a set of chamfered feet with V grooves between them, and a wall running the full
+footprint would fill the grooves and the flanks. Each wall is therefore trimmed with
+`binEnvelope` before being joined — exactly as the scoop trims its ramps. Above `z = 0`
+nothing needs trimming, so it only runs when there is a base at all.
 
-* **Lowest, not largest.** A label tab puts a wide ledge high in the cavity — on a 2x1x1
-  bin it measures 3.894 against the floor's 0.412 — so choosing by area plants the
-  dividers *on the label*, leaving a 0.525 cm stub under the rim instead of a full-height
-  wall. This shipped, because the test that "passed" ran with `hasTab = False`. Depth is
-  what identifies a floor; size is not.
-* **Above `z = 0`.** The base foot's chamfered underside is horizontal and sits inside the
-  cavity footprint, so without the bound the dividers get driven out of the bottom of the
-  bin.
+Verified with a **tab present** on a 2x1x1 at 32x49 mm, 25 mm height unit: walls stand at
+z = -0.405 and the bounding box is unchanged against the same bin with no dividers, in
+every case tried — 1u, 3u, 2u split four ways, both axes, with and without a lip.
 
-Verified with a **tab present**: a 2u bin asking for 3 compartments clamps to 2 and puts
-one wall at 3.115..3.235 spanning z 0.0744..2.3800 — exactly the hand-built rib. A 3u bin
-asking for 2 splits 2u|1u with the wall on the 2u boundary at 6.315..6.435. Also checked
-at 3x2 across both axes. Bounding box unchanged top and bottom, single solid body in
-every case.
+### Envelope clipping — `binEnvelope.py`
+
+Shared by the scoop and the dividers, both of which add material below `z = 0`.
+
+Anything joined on down there has to respect the base: the corner fillets, the chamfered
+flanks of each foot, and the V grooves where two feet meet. Put material in any of those
+and the bin no longer seats on a baseplate or under another bin — and a bounding box will
+not tell you, because all of it is *inside* the box.
+
+Two negatives, and both are needed. `footprintPrism` is the outer footprint over the whole
+height with corner fillets, which also brings the feet down to the xyClearance size that
+`createBaseBodyPattern` does not apply on its own. `baseImprint` is everything below the
+body that is *not* foot, so cutting with it leaves the flanks and grooves alone; the feet
+are rebuilt from the same `baseGeneratorInput` the bin was made with, so the profile
+matches exactly.
+
+Bodies are clipped **one at a time, against kept tool bodies**. A Fusion Join of *disjoint*
+solids leaves them separate rather than merging, so clipping several as one body silently
+drops all but the first — which is how the scoop lost every row but the front one before
+this was understood.
+
+### Divider height — `dividerRules.py`
+
+Both divider features ask one module how tall a wall may be, so hollow and shelled cannot
+drift apart again.
+
+A wall that reaches the rim crosses the lip opening, which is where the base feet of the
+bin above seat. It only fits in the groove *between* two of those feet, and that groove
+is narrowest exactly at our rim:
+
+    groove at the rim = 2 * (xyClearance + BIN_LIP_TOP_RECESS_HEIGHT) = 1.7 mm
+
+— two feet meet at a knife edge `2 * xyClearance` apart at the top of the base, and our
+rim sits `BIN_LIP_TOP_RECESS_HEIGHT` below the underside of the bin above
+(`BIN_LIP_EXTRA_HEIGHT + BIN_LIP_TOP_RECESS_HEIGHT == BIN_BASE_HEIGHT`), by which point
+the foot's 45 degree top chamfer has opened the gap by that much per side. A 1.2 mm wall
+centred on a unit boundary clears it by 0.25 mm per side. A wall anywhere else fouls.
+
+So height depends on **position**: a divider separating a whole number of gridfinity
+units may run to the rim, and one that does not stops at `cappedTopZ`, the top of the
+label plate. That cap is not invented either. It is the clearance shelf upstream already
+shaves off the whole inner top when there is more than one compartment
+(`binBodyGenerator.py:164`) and the height the label tab is built to
+(`binBodyTabGenerator.py:41`) — so on the hollow path "capped" means *leave it alone*.
+
+**Equal-fraction dividers are never exactly on a boundary.** Asking a wall centred in
+upstream's cavity to also be centred on `k * baseWidth - xyClearance` needs
+`minX = -xyClearance - wallThickness / 2`, and `minX` is `wallThickness`. What is left
+over is `xyClearance + wallThickness/2 - (m/units) * (2*xyClearance + wallThickness)` on
+the hollow path — 0.28 mm on a 3u bin, zero on a 2u one, under a wall thickness at
+worst. That is **treated as alignment anyway**, on instruction: it is the same order as
+the slack the groove already carries, and closing it would mean either moving upstream's
+compartments (an edit to `binBodyGenerator.py`, which this fork exists to avoid) or making
+the compartments unequal, which is worse than the problem.
+
+The **Divider height** dropdown overrides the rule in either direction — *Cap at label
+plate* for every divider, *Extend to bin top* for every divider — and the **Stacking**
+box beside it turns red and names the axis at fault whenever the current settings would
+produce a bin nothing can sit on. It also flags a wall thicker than the groove
+(`maxStackingThickness`), which the dialog otherwise allows up to 2 mm.
+
+### Solid base — `features/solidBase.py`
+
+Fills the V grooves between the gridfinity units on the underside, so the base is one
+continuous foot.
+
+The grooves are emergent, not authored: there is no code that draws them and no flag that
+switches them off. `createBaseBodyPattern` replicates a fully chamfered foot at exactly
+`baseWidth` spacing while each foot's top rectangle is the *full* unit size, so two
+neighbours meet at a knife edge and each one's 2.4 mm chamfer slopes away from it.
+`cutBaseClearance` only trims the outer perimeter, so the interior grooves carry no
+clearance at all. Nothing to disable — the fill has to be added.
+
+    filler = createSingleGridfinityBaseBody(footprint-sized input)
+    cut(filler, createBaseBodyPattern(real feet, holes off))
+    join(bin, the groove sections left over)
+
+Two details the construction depends on:
+
+* **The filler is built pre-trimmed** — at `baseWidth * binWidth - 2 * xyClearance` with
+  the corner fillet `cutBaseClearance` uses, origin at the body corner. Its outer surface
+  therefore sits at or inside the real perimeter everywhere, so it cannot add material
+  outside the envelope, and a join is a no-op where material exists. No clip needed.
+* **The feet subtracted from it have their screw and magnet cutouts forced off.** Those
+  cutouts are voids *inside* the feet and the filler spans them, so subtracting the real
+  hole-bearing feet would leave filler sitting in every hole and the join would plug them.
+
+The result is usually several disjoint bodies — one per boundary, meeting only where two
+boundaries cross — and each touches the feet either side and the body above, so joining
+them all against the bin does merge. Skipped on a 1x1 bin (one foot, no grooves) and when
+there is no base.
+
+**Tracing is suspended while it builds.** This is the one customization that re-runs a
+generator with *different* values in the same input fields: its filler wants `baseWidth`
+to mean the whole footprint, 63.5 mm, while the bin's own base already claimed that name
+for 32 mm. The tracer keys parameters by field name, so it wrote the bin's expression onto
+the filler's dimension. The verify-and-revert guards fired and logged
+`rejected baseWidth — evaluates to 6.35, expected 3.2`, but the geometry came out wrong
+anyway — a 2u bin 63.5 mm wide instead of 31.75, volume 21.19 against 13.79 — and the
+upstream `RemoveBody-label tab` feature then failed to recompute, which is what a user sees
+as a broken bin. `parametrization.suspended()` turns tracing off for the block and puts it
+back afterwards. The cost is that the fill is dimensioned with baked numbers, which is
+right for geometry nobody would want to edit by name.
+
+**This is a deliberate departure from the gridfinity spec.** The bin still seats on a
+baseplate, the outer profile being untouched, but with the grooves gone it can no longer
+sit over the full-height dividers of the bin below. The tooltip and the warning box say
+so.
+
+Verified on a 3x2 with screw holes and magnets: bounding box identical, volume
+58.8017 — 63.9872, one solid body, all 24 screw holes and 24 magnet cutouts still
+present, and the only faces lost are 8 foot corner fillets in the interior, which is the
+point. With tracing suspended the run emits exactly the same 54 expressions as the same bin
+with the option off.
 
 ### Shelled scoop — `features/shelledScoop.py`
 
@@ -322,18 +438,10 @@ at exactly `y = 2.5`, where the arc lands tangentially — no step and no gap.
 
 A wedge spanning the full footprint would reach past the corner fillets, past the foot
 chamfers and into the V grooves between feet, and the bin would no longer seat on a
-baseplate or under another bin. Each ramp is therefore
-
-* **intersected** with a corner-filleted prism of the real footprint over the bin's whole
-  height — same construction as `binBodyGenerator.py:38-57`. This also brings the feet
-  below down to the xyClearance size, which `createBaseBodyPattern` does not do on its own
-  (upstream trims them afterwards with `cutBaseClearance`);
-* **cut** by a negative carrying the imprint of the base feet: a box over the footprint
-  from the body bottom to `z = 0` with the feet removed from it, so what is left is exactly
-  the flanks and grooves the ramp must not enter. The feet are rebuilt with the generator's
-  own `createBaseBodyPattern` from the same `baseGeneratorInput` the bin was made with, so
-  the profile matches exactly. Screw and magnet cutouts are already forced off for this bin
-  type at `entry.py:926-928`.
+baseplate or under another bin. Each ramp is therefore clipped with `binEnvelope` —
+intersected with the footprint prism, then cut by the base imprint. Screw and magnet
+cutouts are already forced off for this bin type at `entry.py:926-928`, so the rebuilt feet
+match without further work.
 
 Both are skipped when *Generate base* is off — the body starts at `z = 0`, the floor
 collapses to the shell thickness and the prism alone is enough.
@@ -345,18 +453,18 @@ Three details worth keeping:
   and into the side walls leaves no sliver where the cavity's corner fillets curve away.
 * **Every row is scooped**, not just the front one, matching how hollow bins scoop each
   compartment. Rows come from `shelledDividers.wallPositions()` — the walls that were
-  actually built — rather than from `compartmentsByY`, which is clamped to the unit count.
-* **The ramps are clipped one at a time, against kept tool bodies.** The first version
-  joined them into a single body first, and a Fusion Join of *disjoint* solids leaves them
-  separate rather than merging: on a 3x2 grid the second row silently became a leftover
-  body and never reached the bin. `combineUtils` always consumes its tools, hence the local
-  `_combine()` with `isKeepToolBodies`.
+  actually built — so a row appears wherever a wall does, under whichever placement rule
+  applied to that axis. This is also where the 1u fix reaches the scoop: a bin 1u long
+  used to get no walls, and therefore a single ramp for the whole bin.
+* **The ramps are clipped one at a time, against kept tool bodies** (— now
+  `binEnvelope.clip`). The first version joined them into a single body first, and a Fusion
+  Join of *disjoint* solids leaves them separate rather than merging: on a 3x2 grid the
+  second row silently became a leftover body and never reached the bin.
 
-`wallTopZ()` is computed from `binBodyGenerator.py:36`, not measured. The body's own
-bounding box would give the top of the *lip*, 4.4 mm higher and not where the cavity ends.
-`shelledDividers.cavityFloor()` is deliberately **not** reused: it returns the lowest
-horizontal face above `z = 0`, which on a shelled bin is a 0.095 sliver — precisely how the
-old radius rule went wrong.
+The cavity top comes from `dividerRules.bodyTopZ()`, computed from
+`binBodyGenerator.py:36` rather than measured: the body's own bounding box would give the
+top of the *lip*, 4.4 mm higher and not where the cavity ends. The floor is
+`bodyBottom + shell`, the same expression the dividers now stand on.
 
 Verified on the reference bin (1x3x1, base 21.5 × 47.5 mm, 25 mm height unit, 1.2 mm wall,
 lip, tab, grid 3x1, scoop on): three scoop faces of radius 2.405 spanning `y 0.095..2.5`
@@ -373,7 +481,7 @@ never intersects the body. Pre-existing upstream, unrelated to this feature.
 
 ### Full-height dividers — `features/fullHeightDividers.py`
 
-The hollow counterpart to the shelled dividers, and the reason both now finish at the
+The hollow counterpart to the shelled dividers, and the reason both finish at the
 same height. Hollow and shelled disagreed by a whole lip:
 
 | | divider top |
@@ -392,9 +500,12 @@ joins it back in along with the void the lip leaves above. The walls run the ful
 footprint in their perpendicular direction, so nothing is left where the lip's inner
 chamfer curves away — a join is a no-op where material already exists.
 
-**This gives up stacking.** The raised wall crosses the lip opening, which is where the
-base feet of the bin above would seat. That is what upstream's clearance slab protects.
-The shelled bins already made this trade; this makes hollow bins match.
+**Only the dividers that fit are raised**, per **Divider height** above: a raised wall
+crosses the lip opening, so it fits only in the groove between two of the feet above, and
+therefore only on a unit boundary. Every other divider is left exactly where upstream's
+clearance slab put it, and the bin still stacks. The first version raised all of them
+unconditionally, which is what made a bin with compartments unstackable unless the grid
+happened to line up.
 
 Wall positions are computed from the generator's own arithmetic
 (`binBodyGenerator.py:113-122`), not measured, so they land exactly where the compartment
