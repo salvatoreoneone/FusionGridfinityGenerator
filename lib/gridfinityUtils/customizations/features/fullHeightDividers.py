@@ -1,4 +1,4 @@
-"""Raise the compartment dividers of a hollow bin to the rim.
+"""Raise the compartment dividers of a hollow bin to the rim, where they fit.
 
 Hollow and shelled bins disagree about how tall a divider is:
 
@@ -19,9 +19,16 @@ material already exists, so the walls run the full footprint in their perpendicu
 direction rather than stopping at the compartment bounds -- no sliver is left where the
 lip's inner chamfer curves away.
 
-**This gives up stacking.** The raised wall crosses the lip opening, which is where the
-base feet of the bin above would seat. That is what upstream's clearance slab protects,
-and matching the shelled bins means accepting the same trade.
+**Only the dividers that fit are raised.** A raised wall crosses the lip opening, which
+is where the base feet of the bin above seat, so it fits only in the groove between two
+of those feet -- that is, only on a gridfinity unit boundary. `dividerRules` decides;
+every other divider is left exactly where upstream's clearance slab put it, and the bin
+still stacks. The dialog's Divider height dropdown can force the question either way.
+
+Upstream's equal-fraction cells never land exactly on a boundary -- 0.28 mm out on a 3u
+bin, see `dividerRules` -- and that offset is deliberately treated as alignment: it is a
+fraction of the clearance the groove already carries, and correcting it would mean moving
+upstream's compartments.
 
 Custom compartment layouts are respected: a compartment that spans two cells of the grid
 has no wall between them, and raising one there would bridge its top. Grid lines a
@@ -30,6 +37,8 @@ compartment crosses are therefore raised row by row, skipping the rows it covers
 
 import adsk.core, adsk.fusion
 
+from .. import dividerRules
+from .. import inputs as customInputs
 from ... import const, shapeUtils, combineUtils, commonUtils
 from .... import fusion360utils as futil
 
@@ -50,6 +59,10 @@ def isHollow(commandInputs) -> bool:
 def isEnabled(context) -> bool:
     binInput = context.binBodyInput
     if binInput is None or not isHollow(context.commandInputs):
+        return False
+    # Capped is upstream's own result: the clearance slab already stops every divider at
+    # the label plate, so there would be nothing to add.
+    if customInputs.dividerHeightMode(context.commandInputs) == dividerRules.MODE_CAP:
         return False
     # Upstream only shaves the divider tops when there is more than one compartment
     # (binBodyGenerator.py:164), and with a single compartment there is no divider to
@@ -87,6 +100,8 @@ class _Grid():
 
         self.countX = max(1, int(binInput.compartmentsByX))
         self.countY = max(1, int(binInput.compartmentsByY))
+        self.unitsX = max(1, int(binInput.binWidth))
+        self.unitsY = max(1, int(binInput.binLength))
         self.unitWidth = (self.maxX - self.minX
                           - (self.countX - 1) * self.wallThickness) / self.countX
         self.unitLength = (self.maxY - self.minY
@@ -121,7 +136,7 @@ def _clamp(value, low, high):
 
 
 def wallFootprints(binInput):
-    """(originX, originY, width, length) of every divider to raise.
+    """(originX, originY, width, length, isGridAligned) of every divider.
 
     A grid line no compartment crosses is raised in one piece spanning the whole
     footprint, which is both cheaper and cleaner at the lip. One that is crossed is
@@ -133,31 +148,33 @@ def wallFootprints(binInput):
 
     for column in range(grid.countX - 1):
         x = grid.cellX(column) + grid.unitWidth
+        aligned = dividerRules.isGridAligned(column + 1, grid.countX, grid.unitsX)
         rows = [row for row in range(grid.countY) if not grid.spansColumns(column, row)]
         if not rows:
             continue
         if len(rows) == grid.countY:
-            walls.append((x, 0.0, grid.wallThickness, grid.bodyLength))
+            walls.append((x, 0.0, grid.wallThickness, grid.bodyLength, aligned))
             continue
         for row in rows:
             y0 = _clamp(grid.cellY(row) - grid.wallThickness, 0.0, grid.bodyLength)
             y1 = _clamp(grid.cellY(row) + grid.unitLength + grid.wallThickness,
                         0.0, grid.bodyLength)
-            walls.append((x, y0, grid.wallThickness, y1 - y0))
+            walls.append((x, y0, grid.wallThickness, y1 - y0, aligned))
 
     for row in range(grid.countY - 1):
         y = grid.cellY(row) + grid.unitLength
+        aligned = dividerRules.isGridAligned(row + 1, grid.countY, grid.unitsY)
         columns = [c for c in range(grid.countX) if not grid.spansRows(row, c)]
         if not columns:
             continue
         if len(columns) == grid.countX:
-            walls.append((0.0, y, grid.bodyWidth, grid.wallThickness))
+            walls.append((0.0, y, grid.bodyWidth, grid.wallThickness, aligned))
             continue
         for column in columns:
             x0 = _clamp(grid.cellX(column) - grid.wallThickness, 0.0, grid.bodyWidth)
             x1 = _clamp(grid.cellX(column) + grid.unitWidth + grid.wallThickness,
                         0.0, grid.bodyWidth)
-            walls.append((x0, y, x1 - x0, grid.wallThickness))
+            walls.append((x0, y, x1 - x0, grid.wallThickness, aligned))
 
     return walls
 
@@ -175,10 +192,7 @@ def applyToBin(context):
 
     # Where upstream leaves the divider tops: the body top, less the clearance slab it
     # shaves off the whole inner region (binBodyGenerator.py:164-181).
-    binHeightWithoutBase = float(binInput.binHeight) - 1
-    bodyTop = (binHeightWithoutBase * float(binInput.heightUnit)
-               + max(0.0, float(binInput.heightUnit) - float(const.BIN_BASE_HEIGHT)))
-    bottom = bodyTop - float(const.BIN_TAB_TOP_CLEARANCE)
+    bottom = dividerRules.cappedTopZ(binInput)
 
     # The rim, measured rather than derived: with a lip it is the lip top, without one
     # the body top, and the lip's own top recess comes off either way.
@@ -188,13 +202,15 @@ def applyToBin(context):
         futil.log('%s: dividers already reach the rim, nothing to do' % NAME)
         return
 
-    walls = wallFootprints(binInput)
+    mode = customInputs.dividerHeightMode(context.commandInputs)
+    walls = [wall for wall in wallFootprints(binInput)
+             if dividerRules.isFullHeight(mode, wall[4])]
     if not walls:
-        futil.log('%s: no dividers to raise' % NAME)
+        futil.log('%s: no divider sits on a unit boundary, leaving them all capped' % NAME)
         return
 
     bodies = []
-    for originX, originY, width, length in walls:
+    for originX, originY, width, length, _aligned in walls:
         wall = shapeUtils.simpleBox(
             component.xYConstructionPlane,
             bottom,
@@ -208,6 +224,6 @@ def applyToBin(context):
         bodies.append(wall)
 
     combineUtils.joinBodies(target, commonUtils.objectCollectionFromList(bodies), component)
-    futil.log('%s: raised %d divider(s) from %.4f to %.4f (grid %sx%s)'
+    futil.log('%s: raised %d divider(s) from %.4f to %.4f (grid %sx%s, mode %s)'
               % (NAME, len(bodies), bottom, top,
-                 int(binInput.compartmentsByX), int(binInput.compartmentsByY)))
+                 int(binInput.compartmentsByX), int(binInput.compartmentsByY), mode))

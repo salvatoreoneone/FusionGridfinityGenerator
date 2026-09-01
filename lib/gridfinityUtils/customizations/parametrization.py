@@ -19,6 +19,7 @@ automatically -- which is the point.
 Everything is restored in `uninstall()`, including on failure.
 """
 
+import contextlib
 import sys
 
 import adsk.core, adsk.fusion
@@ -274,6 +275,46 @@ def install(design: adsk.fusion.Design):
         raise
     _session = session
     futil.log('Parametrisation: tracing installed')
+
+
+@contextlib.contextmanager
+def suspended():
+    """Run a block with tracing off, then put it back exactly as it was.
+
+    For customization code that re-runs a generator with *different* values in the same
+    input fields. `solidBase` rebuilds the base profile at footprint size, so its sketch
+    wants `baseWidth` to mean 63.5 mm while the bin's own base already claimed that name
+    for 32 mm. The tracer keys parameters by field name, so it writes the bin's expression
+    onto the filler's dimension: the verify-and-revert guards fire, the geometry comes out
+    the wrong size anyway, and upstream features downstream of it fail to recompute.
+
+    Cheaper and safer than teaching the tracer about second uses -- the geometry this
+    covers is derived, so it has nothing a user would want to edit by name.
+    """
+    session = _session
+    if session is None:
+        yield
+        return
+    patched = {
+        'constants': dict((name, getattr(const, name)) for name in session.originalConstants),
+        'setters': dict((key, getattr(key[0], key[1])) for key in session.originalSetters),
+        'rectangles': [(module, module.createRectangle)
+                       for module, _ in session.originalCreateRectangle],
+        'point3D': adsk.core.Point3D.create,
+        'createByReal': adsk.core.ValueInput.createByReal,
+    }
+    _restore(session)
+    try:
+        yield
+    finally:
+        for name, value in patched['constants'].items():
+            setattr(const, name, value)
+        for key, prop in patched['setters'].items():
+            setattr(key[0], key[1], prop)
+        for module, function in patched['rectangles']:
+            module.createRectangle = function
+        adsk.core.Point3D.create = patched['point3D']
+        adsk.core.ValueInput.createByReal = patched['createByReal']
 
 
 def uninstall():
